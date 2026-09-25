@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Protótipo demonstrativo do Portal de Desempenho dos Operadores" />
+    <title>Portal de Desempenho | Protótipo</title>
+    <link rel="stylesheet" href="css/styles.css" />
+  </head>
+  <body>
+    <div id="app"></div>
+    <script>
+      (function () {
+        var app = document.getElementById('app');
+        function showStartupError(message) {
+          if (!app || app.dataset.rendered === 'true') return;
+          app.innerHTML = '<main style="min-height:100vh;display:grid;place-items:center;padding:32px;background:#f6f1e8;color:#292c29;font-family:Segoe UI,Arial,sans-serif"><section style="max-width:560px;padding:32px;border:1px solid #d7d7d0;background:#fbf9f4"><p style="color:#355e48;font-size:11px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase">Portal de Desempenho</p><h1 style="font-family:Georgia,serif">Não foi possível carregar o portal</h1><p style="line-height:1.6">Ocorreu um erro durante a inicialização. Atualize a página ou verifique o Console do navegador.</p><small style="color:#666a64">' + String(message || 'Erro de inicialização').replace(/[<>]/g, '') + '</small></section></main>';
+        }
+        window.addEventListener('error', function (event) {
+          console.error('Erro de inicialização do portal:', event.error || event.message);
+          showStartupError(event.message);
+        });
+        window.addEventListener('unhandledrejection', function (event) {
+          console.error('Promise rejeitada na inicialização do portal:', event.reason);
+          showStartupError(event.reason && event.reason.message ? event.reason.message : 'Falha inesperada');
+        });
+        window.showStartupError = showStartupError;
+      }());
+    </script>
+    <script src="js/data.js"></script>
+    <script src="js/config.js"></script>
+    <script src="js/services/dataService.js"></script>
+    <script src="js/services/userService.js"></script>
+    <script src="js/services/authService.js"></script>
+    <script src="js/excel.js"></script>
+    <script src="js/app.js"></script>
+  </body>
+</html>

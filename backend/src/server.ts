@@ -1,0 +1,24 @@
+import express from 'express';
+import cors from 'cors';
+import morgan from 'morgan';
+import { config } from './config.js';
+import { networkAccessMiddleware } from './middleware/networkAccess.js';
+import { authRouter } from './routes/auth.js';
+import { usersRouter } from './routes/users.js';
+import { dataRouter } from './routes/data.js';
+import { dashboardRouter } from './routes/dashboard.js';
+import { integrationsRouter } from './routes/integrations.js';
+
+const app = express();
+app.use(networkAccessMiddleware);
+app.use(cors({ origin: config.clientUrl }));
+app.use(express.json({ limit: '2mb' }));
+app.use(morgan('combined'));
+app.get('/health', (_request, response) => response.json({ status: 'ok', dataSource: config.dataSource, networkRestrictionEnabled: config.networkRestrictionEnabled }));
+app.use('/api/auth', authRouter);
+app.use('/api/users', usersRouter);
+app.use('/api', dashboardRouter);
+app.use('/api', dataRouter);
+app.use('/api/integrations', integrationsRouter);
+app.use((error: Error, _request: express.Request, response: express.Response, _next: express.NextFunction) => { console.error(error); response.status(500).json({ message: 'Erro interno do servidor.' }); });
+app.listen(config.port, () => console.log(`API listening on port ${config.port}`));

@@ -1,0 +1,133 @@
+generator client { provider = "prisma-client-js" }
+
+datasource db { provider = "postgresql" url = env("DATABASE_URL") }
+
+model User {
+  id String @id @default(uuid()) @db.Uuid
+  username String @unique @db.VarChar(120)
+  passwordHash String @map("password_hash")
+  name String
+  role String @db.VarChar(30)
+  jobTitle String? @map("job_title")
+  area String?
+  shift String?
+  coordinatorId String? @map("coordinator_id") @db.Uuid
+  active Boolean @default(true)
+  mustChangePassword Boolean @default(true) @map("must_change_password")
+  lastLogin DateTime? @map("last_login")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  coordinator User? @relation("Team", fields: [coordinatorId], references: [id])
+  team User[] @relation("Team")
+  attendance Attendance[]
+  labels Label[]
+  bos Bos[]
+  bosq Bosq[]
+  improvementIdeas ImprovementIdea[]
+  goals Goal[]
+  importLogs ImportLog[]
+  @@index([coordinatorId])
+  @@index([role, active])
+  @@map("users")
+}
+
+model Attendance {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  date DateTime @db.Date
+  status String
+  hours String?
+  observation String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  user User @relation(fields: [userId], references: [id])
+  @@index([userId, date])
+  @@map("attendance")
+}
+
+model Label {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  date DateTime @db.Date
+  labelNumber String? @map("label_number")
+  category String?
+  description String?
+  status String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  user User @relation(fields: [userId], references: [id])
+  @@index([userId, date])
+  @@map("labels")
+}
+
+model Bos {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  date DateTime @db.Date
+  bosNumber String? @map("bos_number")
+  description String?
+  status String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  user User @relation(fields: [userId], references: [id])
+  @@index([userId, date])
+  @@map("bos")
+}
+
+model Bosq {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  date DateTime @db.Date
+  bosqNumber String? @map("bosq_number")
+  description String?
+  status String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  user User @relation(fields: [userId], references: [id])
+  @@index([userId, date])
+  @@map("bosq")
+}
+
+model ImprovementIdea {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  date DateTime @db.Date
+  title String
+  description String?
+  status String?
+  result String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  user User @relation(fields: [userId], references: [id])
+  @@index([userId, date])
+  @@map("improvement_ideas")
+}
+
+model Goal {
+  id String @id @default(uuid()) @db.Uuid
+  userId String @map("user_id") @db.Uuid
+  indicator String
+  year Int
+  month Int
+  target Decimal @db.Decimal(12, 2)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  user User @relation(fields: [userId], references: [id])
+  @@unique([userId, indicator, year, month])
+  @@map("goals")
+}
+
+model ImportLog {
+  id String @id @default(uuid()) @db.Uuid
+  fileName String @map("file_name")
+  importedBy String @map("imported_by") @db.Uuid
+  importedAt DateTime @default(now()) @map("imported_at")
+  recordsFound Int @default(0) @map("records_found")
+  recordsInserted Int @default(0) @map("records_inserted")
+  recordsUpdated Int @default(0) @map("records_updated")
+  recordsFailed Int @default(0) @map("records_failed")
+  status String
+  importer User @relation(fields: [importedBy], references: [id])
+  @@index([importedBy, importedAt])
+  @@map("import_logs")
+}

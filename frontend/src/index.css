@@ -1,0 +1,260 @@
+:root {
+  font-family: 'Segoe UI', sans-serif;
+  color: #302522;
+  background: #f5efe7;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button,
+input {
+  font: inherit;
+}
+
+.login-shell {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.95fr) minmax(420px, 1.05fr);
+  min-height: 100vh;
+  background: #f5efe7;
+}
+
+.brand-panel {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: clamp(3rem, 8vw, 7rem);
+  color: #fffaf4;
+  background: linear-gradient(145deg, #7e1728 0%, #5b1220 58%, #3e1720 100%);
+  position: relative;
+  overflow: hidden;
+}
+
+.brand-panel::after {
+  content: '';
+  width: 360px;
+  height: 360px;
+  border: 1px solid rgba(255, 250, 244, 0.2);
+  border-radius: 50%;
+  position: absolute;
+  right: -150px;
+  bottom: -120px;
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
+  margin-bottom: 2.5rem;
+  border: 1px solid rgba(255, 250, 244, 0.65);
+  color: #f4c98b;
+  font-family: Georgia, serif;
+  font-size: 1.25rem;
+  letter-spacing: 0.08em;
+}
+
+.eyebrow {
+  margin: 0 0 0.8rem;
+  color: #f4c98b;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.brand-panel h1,
+.form-panel h2 {
+  margin: 0;
+  font-family: Georgia, serif;
+  font-weight: 700;
+  line-height: 1.08;
+}
+
+.brand-panel h1 {
+  max-width: 480px;
+  font-size: clamp(2.7rem, 5vw, 5rem);
+}
+
+.brand-copy {
+  max-width: 390px;
+  margin: 1.5rem 0 0;
+  color: #eadbd1;
+  font-size: 1.05rem;
+  line-height: 1.7;
+}
+
+.coffee-line {
+  width: 88px;
+  height: 2px;
+  margin: 3.5rem 0 1rem;
+  background: #f4c98b;
+}
+
+.brand-footnote {
+  margin: 0;
+  color: #eadbd1;
+  font-size: 0.85rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.form-panel {
+  display: grid;
+  place-items: center;
+  padding: 3rem;
+  background: #fffaf4;
+}
+
+.form-wrap {
+  width: min(100%, 430px);
+}
+
+.dark-eyebrow {
+  color: #9a2936;
+}
+
+.form-panel h2 {
+  color: #302522;
+  font-size: clamp(2rem, 4vw, 3rem);
+}
+
+.form-intro {
+  margin: 1rem 0 2.5rem;
+  color: #796d67;
+  line-height: 1.6;
+}
+
+form {
+  display: grid;
+  gap: 0.7rem;
+}
+
+label {
+  margin-top: 0.75rem;
+  color: #493d38;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+input {
+  width: 100%;
+  border: 1px solid #d8cbc0;
+  border-radius: 3px;
+  padding: 0.95rem 1rem;
+  outline: none;
+  color: #302522;
+  background: #fff;
+  transition: border-color 160ms ease, box-shadow 160ms ease;
+}
+
+input:focus {
+  border-color: #9a2936;
+  box-shadow: 0 0 0 3px rgba(154, 41, 54, 0.12);
+}
+
+input::placeholder {
+  color: #ad9e95;
+}
+
+button {
+  margin-top: 1.25rem;
+  border: 0;
+  border-radius: 3px;
+  padding: 1rem;
+  cursor: pointer;
+  color: #fffaf4;
+  background: #8b1e2d;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  transition: background 160ms ease, transform 160ms ease;
+}
+
+button:hover {
+  background: #681524;
+  transform: translateY(-1px);
+}
+
+.form-message {
+  min-height: 1.25rem;
+  margin: 0.4rem 0 0;
+  color: #8b1e2d;
+  font-size: 0.84rem;
+}
+
+.demo-note {
+  margin: 2.5rem 0 0;
+  color: #9a8c83;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.error-screen {
+  display: grid;
+  min-height: 100vh;
+  align-content: center;
+  justify-items: center;
+  gap: 0.75rem;
+  padding: 2rem;
+  text-align: center;
+  color: #302522;
+  background: #f5efe7;
+}
+
+.error-screen h1,
+.error-screen p {
+  max-width: 520px;
+  margin: 0;
+}
+
+.error-screen h1 {
+  color: #8b1e2d;
+  font-family: Georgia, serif;
+}
+
+.error-screen p {
+  color: #796d67;
+  line-height: 1.6;
+}
+
+@media (max-width: 760px) {
+  .login-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .brand-panel {
+    min-height: 330px;
+    padding: 2.5rem 1.5rem;
+  }
+
+  .brand-mark {
+    margin-bottom: 1.5rem;
+  }
+
+  .brand-panel h1 {
+    font-size: 2.6rem;
+  }
+
+  .brand-copy {
+    margin-top: 1rem;
+    font-size: 0.95rem;
+  }
+
+  .coffee-line {
+    margin: 1.75rem 0 0.8rem;
+  }
+
+  .form-panel {
+    padding: 3rem 1.5rem 4rem;
+  }
+}
