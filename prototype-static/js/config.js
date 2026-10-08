@@ -6,5 +6,17 @@ window.PORTAL_CONFIG = {
     'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',
     'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'
   ],
-  years: ['2026', '2025']
+  years: ['2026', '2025'],
+  goalConfig: {
+    monthly: {
+      BOS: 5,
+      BOSQ: 5,
+      SHE_ABERTAS: 2,
+      SHE_FECHADAS: 2,
+      IDEIAS_ABERTAS: 1
+    },
+    required: ['BOS', 'BOSQ', 'SHE_ABERTAS', 'SHE_FECHADAS', 'IDEIAS_ABERTAS'],
+    areas: ['CAFÉ CRU', 'MOAGEM', 'TORRADOR'],
+    categories: ['SHE', 'MA']
+  }
 };

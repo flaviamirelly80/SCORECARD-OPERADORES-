@@ -17,6 +17,7 @@
     month: 'Abril',
     year: '2026',
     area: 'Todas',
+    labelCategory: 'SHE',
     usersQuery: '',
     userRoleFilter: 'Todos',
     userStatusFilter: 'Todos',
@@ -130,11 +131,11 @@
   }
 
   function operatorNav() {
-    return navItem('overview', 'Início', 'overview') + navItem('overview', 'Meu desempenho', 'overview') + navItem('journey', 'Minha jornada', 'journey') + navItem('etiquetas', 'Etiquetas', 'tag') + navItem('bos', 'BOS', 'bos') + navItem('bosq', 'BOSQ', 'bos') + navItem('ideias', 'Ideias de melhoria', 'ideas') + navItem('evolution', 'Minha evolução', 'overview') + navItem('profile', 'Meu perfil', 'team');
+    return navItem('overview', 'Início', 'overview') + navItem('overview', 'Meu desempenho', 'overview') + navItem('journey', 'Minha jornada', 'journey') + navItem('etiquetas', 'Etiquetas', 'tag') + navItem('metas-area', 'Metas da área', 'team') + navItem('bos', 'BOS', 'bos') + navItem('bosq', 'BOSQ', 'bos') + navItem('ideias', 'Ideias de melhoria', 'ideas') + navItem('evolution', 'Minha evolução', 'overview') + navItem('profile', 'Meu perfil', 'team');
   }
 
   function coordinatorNav() {
-    return navItem('overview', 'Visão geral', 'overview') + navItem('team', 'Minha equipe', 'team') + navItem('overview', 'Visão individual', 'overview') + navItem('journey', 'Jornada', 'journey') + navItem('etiquetas', 'Etiquetas', 'tag') + navItem('bos', 'BOS', 'bos') + navItem('bosq', 'BOSQ', 'bos') + navItem('ideias', 'Ideias', 'ideas') + navItem('import', 'Importar dados', 'upload') + navItem('export', 'Exportar dados', 'download') + navItem('users', 'Gestão de usuários', 'team') + navItem('profile', 'Meu perfil', 'team');
+    return navItem('overview', 'Visão geral', 'overview') + navItem('team', 'Minha equipe', 'team') + navItem('overview', 'Visão individual', 'overview') + navItem('journey', 'Jornada', 'journey') + navItem('etiquetas', 'Etiquetas', 'tag') + navItem('metas-area', 'Metas da área', 'team') + navItem('bos', 'BOS', 'bos') + navItem('bosq', 'BOSQ', 'bos') + navItem('ideias', 'Ideias', 'ideas') + navItem('import', 'Importar dados', 'upload') + navItem('export', 'Exportar dados', 'download') + navItem('users', 'Gestão de usuários', 'team') + navItem('profile', 'Meu perfil', 'team');
   }
 
   function navItem(view, label, iconName) {
@@ -169,6 +170,12 @@
     if (yearSelect) { yearSelect.innerHTML = yearOptions(); yearSelect.value = state.year; }
     var metricOperatorSelect = document.getElementById('metric-operator-filter');
     if (metricOperatorSelect) metricOperatorSelect.addEventListener('change', function () { state.metricOperator = metricOperatorSelect.value; state.selectedOperator = metricOperatorSelect.value === 'Todos' ? null : data.operators.find(function (operator) { return operator.id === metricOperatorSelect.value && operator.role === 'operator'; }) || null; renderShell(); });
+    document.querySelectorAll('[data-label-category]').forEach(function (button) {
+      button.addEventListener('click', function () {
+        state.labelCategory = button.dataset.labelCategory;
+        renderShell();
+      });
+    });
     var backToTeam = document.getElementById('back-to-team');
     if (backToTeam) backToTeam.addEventListener('click', function () { state.selectedOperator = null; state.metricOperator = 'Todos'; state.area = 'Todas'; renderShell(); });
     var search = document.getElementById('operator-search');
@@ -220,7 +227,7 @@
   }
 
   function pageTitle() {
-    var titles = { overview: 'Visão geral', journey: 'Minha jornada', etiquetas: 'Etiquetas', bos: 'BOS', bosq: 'BOSQ', ideias: 'Ideias de melhoria', evolution: 'Minha evolução', team: 'Minha equipe', import: 'Importar dados', export: 'Exportar dados', users: 'Gestão de usuários', profile: 'Meu perfil' };
+    var titles = { overview: 'Visão geral', journey: 'Minha jornada', etiquetas: 'Etiquetas', 'metas-area': 'Metas da área', bos: 'BOS', bosq: 'BOSQ', ideias: 'Ideias de melhoria', evolution: 'Minha evolução', team: 'Minha equipe', import: 'Importar dados', export: 'Exportar dados', users: 'Gestão de usuários', profile: 'Meu perfil' };
     return titles[state.view] || 'Visão geral';
   }
 
@@ -237,7 +244,9 @@
     if (state.view === 'journey') return journeyPage();
     if (state.view === 'ideias') return ideasPage();
     if (state.view === 'evolution') return overviewPage();
-    if (['etiquetas', 'bos', 'bosq'].includes(state.view)) return metricPage(state.view);
+    if (state.view === 'etiquetas') return labelsPage();
+    if (state.view === 'metas-area') return areaGoalsPage();
+    if (['bos', 'bosq'].includes(state.view)) return metricPage(state.view);
     return overviewPage();
   }
 
@@ -255,6 +264,76 @@
 
   function selectedOperatorValue() {
     return state.selectedOperator && state.selectedOperator.role === 'operator' ? state.selectedOperator.id : 'Todos';
+  }
+
+  function goalConfig() {
+    return (window.PORTAL_CONFIG && window.PORTAL_CONFIG.goalConfig) || {
+      monthly: { BOS: 5, BOSQ: 5, SHE_ABERTAS: 2, SHE_FECHADAS: 2, IDEIAS_ABERTAS: 1 },
+      required: ['BOS', 'BOSQ', 'SHE_ABERTAS', 'SHE_FECHADAS', 'IDEIAS_ABERTAS']
+    };
+  }
+
+  function getOperatorGoalValue(operatorId, metricKey, year, month) {
+    var matrix = (window.PROTOTYPE_DATA && window.PROTOTYPE_DATA.monthlyGoals) || {};
+    var record = matrix[operatorId] && matrix[operatorId][year] && matrix[operatorId][year][month];
+    if (record && typeof record[metricKey] !== 'undefined') return Number(record[metricKey] || 0);
+    if (metricKey === 'BOS') return Number((window.PROTOTYPE_DATA && window.PROTOTYPE_DATA.bos && window.PROTOTYPE_DATA.bos[operatorId]) || 0);
+    if (metricKey === 'BOSQ') return Number((window.PROTOTYPE_DATA && window.PROTOTYPE_DATA.bosq && window.PROTOTYPE_DATA.bosq[operatorId]) || 0);
+    if (metricKey === 'IDEIAS_ABERTAS') return Number((window.PROTOTYPE_DATA && window.PROTOTYPE_DATA.ideas && window.PROTOTYPE_DATA.ideas[operatorId]) || 0);
+    return 0;
+  }
+
+  function countLabelEntries(operatorId, category, status, year, month) {
+    var labels = (window.PROTOTYPE_DATA && window.PROTOTYPE_DATA.labels) || [];
+    return labels.filter(function (entry) {
+      return entry.userId === operatorId && entry.year === year && entry.month === month && entry.category === category && entry.status === status;
+    }).reduce(function (sum, entry) {
+      return sum + Number(entry.count || 0);
+    }, 0);
+  }
+
+  function getMetricRealized(operatorId, metricKey) {
+    var year = state.year || '2026';
+    var month = state.month || 'Abril';
+    if (metricKey === 'SHE_ABERTAS') return countLabelEntries(operatorId, 'SHE', 'ABERTA', year, month) || getOperatorGoalValue(operatorId, 'SHE_ABERTAS', year, month);
+    if (metricKey === 'SHE_FECHADAS') return countLabelEntries(operatorId, 'SHE', 'FECHADA', year, month) || getOperatorGoalValue(operatorId, 'SHE_FECHADAS', year, month);
+    if (metricKey === 'MA') return countLabelEntries(operatorId, 'MA', 'TOTAL', year, month) || getOperatorGoalValue(operatorId, 'MA', year, month);
+    return getOperatorGoalValue(operatorId, metricKey, year, month);
+  }
+
+  function goalStatusText(actual, goal) {
+    return actual >= goal ? 'OK' : 'NÃO OK';
+  }
+
+  function goalStatusClass(actual, goal) {
+    return actual >= goal ? 'positive' : 'warning';
+  }
+
+  function getMonthlyGoalSummary(operatorId) {
+    var year = state.year || '2026';
+    var month = state.month || 'Abril';
+    var summary = {
+      BOS: { meta: goalConfig().monthly.BOS, realizado: getMetricRealized(operatorId, 'BOS'), status: goalStatusText(getMetricRealized(operatorId, 'BOS'), goalConfig().monthly.BOS) },
+      BOSQ: { meta: goalConfig().monthly.BOSQ, realizado: getMetricRealized(operatorId, 'BOSQ'), status: goalStatusText(getMetricRealized(operatorId, 'BOSQ'), goalConfig().monthly.BOSQ) },
+      SHE_ABERTAS: { meta: goalConfig().monthly.SHE_ABERTAS, realizado: getMetricRealized(operatorId, 'SHE_ABERTAS'), status: goalStatusText(getMetricRealized(operatorId, 'SHE_ABERTAS'), goalConfig().monthly.SHE_ABERTAS) },
+      SHE_FECHADAS: { meta: goalConfig().monthly.SHE_FECHADAS, realizado: getMetricRealized(operatorId, 'SHE_FECHADAS'), status: goalStatusText(getMetricRealized(operatorId, 'SHE_FECHADAS'), goalConfig().monthly.SHE_FECHADAS) },
+      IDEIAS_ABERTAS: { meta: goalConfig().monthly.IDEIAS_ABERTAS, realizado: getMetricRealized(operatorId, 'IDEIAS_ABERTAS'), status: goalStatusText(getMetricRealized(operatorId, 'IDEIAS_ABERTAS'), goalConfig().monthly.IDEIAS_ABERTAS) }
+    };
+    summary.GERAL = {
+      status: goalConfig().required.every(function (key) {
+        var metric = summary[key];
+        return metric && metric.status === 'OK';
+      }) ? 'OK' : 'NÃO OK'
+    };
+    return summary;
+  }
+
+  function formatGoalMetricCell(metricKey, operator) {
+    var summary = getMonthlyGoalSummary(operator.id);
+    var metric = summary[metricKey];
+    if (!metric) return '<span class="status neutral">-</span>';
+    var statusText = metric.status === 'OK' ? 'OK' : 'NÃO OK';
+    return '<div><span class="status ' + goalStatusClass(metric.realizado, metric.meta) + '">' + statusText + '</span><small>' + metric.realizado + '/' + metric.meta + '</small></div>';
   }
 
   function formatMetricForScope(metric, operators) {
@@ -411,6 +490,53 @@
     var goal = isTeam ? Math.round(ideas.goal * ratio) : ideas.goal;
     var filters = state.user.role === 'coordinator' ? coordinatorFilters() : '';
     return '<section class="page-intro"><p class="overline red">Cultura de melhoria</p><h2>' + (isTeam ? 'Ideias de melhoria da equipe' : 'Ideias de melhoria') + '</h2><p class="muted">' + (isTeam ? 'Resumo consolidado dos ' + operators.length + ' operadores.' : 'Transforme boas observações em melhorias para o nosso trabalho.') + '</p></section>' + filters + '<div class="ideas-grid"><div class="idea-main"><span class="idea-symbol">✦</span><span>Quantidade cadastrada</span><strong>' + registered + '</strong><small>Meta de ' + goal + ' ideias no período</small><div class="goal-progress"><i style="width:' + (registered / Math.max(goal, 1) * 100) + '%"></i></div><b>' + Math.round(registered / Math.max(goal, 1) * 100) + '% da meta atingida</b></div><div class="idea-stat"><span>Em análise</span><strong>' + (isTeam ? Math.round(ideas.analysis * ratio) : ideas.analysis) + '</strong><small>Aguardando avaliação</small></div><div class="idea-stat"><span>Aprovadas</span><strong>' + (isTeam ? Math.round(ideas.approved * ratio) : ideas.approved) + '</strong><small>Boas ideias reconhecidas</small></div><div class="idea-stat"><span>Implementadas</span><strong>' + (isTeam ? Math.round(ideas.implemented * ratio) : ideas.implemented) + '</strong><small>Já geraram impacto</small></div></div><section class="quote-panel"><span>“</span><p>Uma melhoria começa quando alguém decide observar com atenção.</p><small>Programa Ideias de Melhoria</small></section>';
+  }
+
+  function labelsPage() {
+    var category = state.labelCategory === 'MA' ? 'MA' : 'SHE';
+    var rows = data.operators.filter(function (operator) { return operator.role === 'operator' && (state.area === 'Todas' || operator.area === state.area); });
+    var summary = rows.map(function (operator) {
+      var sheOpen = countLabelEntries(operator.id, 'SHE', 'ABERTA', state.year, state.month);
+      var sheClosed = countLabelEntries(operator.id, 'SHE', 'FECHADA', state.year, state.month);
+      var maTotal = countLabelEntries(operator.id, 'MA', 'TOTAL', state.year, state.month);
+      return { operator: operator, sheOpen: sheOpen, sheClosed: sheClosed, maTotal: maTotal };
+    });
+    var categoryTitle = category === 'MA' ? 'Etiquetas MA' : 'Etiquetas SHE';
+    var totals = category === 'SHE'
+      ? { value: summary.reduce(function (sum, item) { return sum + item.sheOpen; }, 0), label: 'Abertas', secondary: summary.reduce(function (sum, item) { return sum + item.sheClosed; }, 0), secondaryLabel: 'Fechadas' }
+      : { value: summary.reduce(function (sum, item) { return sum + item.maTotal; }, 0), label: 'Total', secondary: 0, secondaryLabel: 'Variação' };
+    return '<section class="page-intro"><p class="overline red">Indicadores de qualidade</p><h2>Etiquetas</h2><p class="muted">Separe as etiquetas por categoria para acompanhar o volume e o status operacional.</p></section><div class="filters"><div><label>Categoria</label><div class="tab-group">' + ['SHE', 'MA'].map(function (item) { return '<button class="outline-button" data-label-category="' + item + '" ' + (category === item ? 'style="background:#f5efe8;border-color:#ceb8a7;"' : '') + '>' + item + '</button>'; }).join('') + '</div></div><label>Área / Processo<select id="area-filter"><option value="Todas">Todas</option><option value="CAFÉ CRU">CAFÉ CRU</option><option value="MOAGEM">MOAGEM</option><option value="TORRADOR">TORRADOR</option></select></label><label>Mês<select id="month-filter">' + monthOptions(true) + '</select></label><label>Ano<select id="year-filter">' + yearOptions() + '</select></label></div><div class="summary-grid"><div><span>Etiquetas ' + category + '</span><strong>' + totals.value + '</strong><small>' + totals.label + '</small></div><div><span>' + (category === 'SHE' ? 'Etiquetas SHE fechadas' : 'Categoria') + '</span><strong>' + (category === 'SHE' ? totals.secondary : 'MA') + '</strong><small>' + (category === 'SHE' ? 'Fechadas' : 'Separada da SHE') + '</small></div><div><span>Meta mensal</span><strong>' + (category === 'SHE' ? '2 / 2' : 'N/D') + '</strong><small>' + (category === 'SHE' ? 'Abertas e fechadas' : 'Estrutura pronta') + '</small></div><div><span>Operadores</span><strong>' + rows.length + '</strong><small>Visão por área</small></div></div><section class="table-panel"><div class="table-heading"><div><p class="overline">' + categoryTitle + '</p><h3>' + category + '</h3></div></div><div class="table-scroll"><table><thead><tr><th>Operador</th><th>Área</th><th>' + (category === 'SHE' ? 'Abertas' : 'MA') + '</th><th>' + (category === 'SHE' ? 'Fechadas' : 'Quantidade') + '</th><th>Status</th></tr></thead><tbody>' + summary.map(function (item) {
+      var primary = category === 'SHE' ? item.sheOpen : item.maTotal;
+      var secondary = category === 'SHE' ? item.sheClosed : 0;
+      var status = category === 'SHE' ? (item.sheOpen >= 2 && item.sheClosed >= 2 ? 'OK' : 'NÃO OK') : (item.maTotal > 0 ? 'OK' : 'NÃO OK');
+      return '<tr><td><strong>' + escapeHtml(item.operator.name) + '</strong></td><td>' + escapeHtml(item.operator.area) + '</td><td>' + primary + '</td><td>' + secondary + '</td><td><span class="status ' + (status === 'OK' ? 'positive' : 'warning') + '">' + status + '</span></td></tr>';
+    }).join('') + '</tbody></table></div></section>';
+  }
+
+  function areaGoalsPage() {
+    var rows = data.operators.filter(function (operator) { return operator.role === 'operator' && (state.area === 'Todas' || operator.area === state.area); });
+    var year = state.year || '2026';
+    var month = state.month || 'Abril';
+    var baseFilters = '<section class="page-intro"><p class="overline red">Acompanhamento da área</p><h2>Metas da área</h2><p class="muted">Visão simples do cumprimento das metas mensais por colaborador, sem expor dados pessoais ou sensíveis.</p></section><div class="filters"><label>Área / Processo<select id="area-filter"><option value="Todas">Todas as áreas</option><option value="CAFÉ CRU">CAFÉ CRU</option><option value="MOAGEM">MOAGEM</option><option value="TORRADOR">TORRADOR</option></select></label><label>Mês<select id="month-filter">' + monthOptions(true) + '</select></label><label>Ano<select id="year-filter">' + yearOptions() + '</select></label><label>Operadores<select id="metric-operator-filter"><option value="Todos">Todos os operadores</option>' + rows.map(function (operator) { return '<option value="' + operator.id + '">' + escapeHtml(operator.name) + '</option>'; }).join('') + '</select></label></div>';
+    if (!rows.length) {
+      return baseFilters + '<div class="notice-banner"><span class="notice-icon">i</span><div><strong>Nenhum dado disponível</strong><p>Nenhum operador foi encontrado para o período selecionado. Ajuste os filtros e tente novamente.</p></div></div>';
+    }
+    var teamGoalRows = rows.map(function (operator) {
+      var summary = getMonthlyGoalSummary(operator.id);
+      return { operator: operator, summary: summary, general: summary.GERAL.status };
+    });
+    var okCount = teamGoalRows.filter(function (row) { return row.general === 'OK'; }).length;
+    var notOkCount = teamGoalRows.length - okCount;
+    var allGoalRate = teamGoalRows.length ? Math.round((okCount / teamGoalRows.length) * 100) : 0;
+    var metrics = ['BOS', 'BOSQ', 'SHE_ABERTAS', 'SHE_FECHADAS', 'IDEIAS_ABERTAS'];
+    var topStats = '<div class="summary-grid"><div><span>Operadores</span><strong>' + teamGoalRows.length + '</strong><small>' + month + ' / ' + year + '</small></div><div><span>Operadores OK</span><strong>' + okCount + '</strong><small>Meta atendida</small></div><div><span>Operadores NÃO OK</span><strong>' + notOkCount + '</strong><small>Com pendência</small></div><div><span>% da equipe</span><strong>' + allGoalRate + '%</strong><small>meta atendida</small></div></div>';
+    var metricBreakdown = '<div class="detail-grid">' + metrics.map(function (key) {
+      var count = teamGoalRows.filter(function (row) { return row.summary[key].status === 'OK'; }).length;
+      return '<div class="detail-card"><span>' + key.replace('_', ' ').replace('SHE', 'SHE ').replace('IDEIAS', 'Ideias') + '</span><strong>' + count + '/' + teamGoalRows.length + '</strong><small>' + (count === teamGoalRows.length ? 'Todos atendidos' : 'Meta por operador') + '</small></div>';
+    }).join('') + '</div>';
+    return baseFilters + topStats + metricBreakdown + '<section class="table-panel"><div class="table-heading"><div><p class="overline">Performance da equipe</p><h3>Consolidado</h3></div><span class="updated">Mostrar apenas metas obrigatórias.</span></div><div class="table-scroll"><table><thead><tr><th>Colaborador</th><th>BOS</th><th>BOSQ</th><th>SHE AB.</th><th>SHE FECH.</th><th>IDEIA</th><th>Geral</th></tr></thead><tbody>' + teamGoalRows.map(function (row) {
+      return '<tr><td><strong>' + escapeHtml(row.operator.name) + '</strong><small>' + escapeHtml(row.operator.area) + '</small></td><td>' + formatGoalMetricCell('BOS', row.operator) + '</td><td>' + formatGoalMetricCell('BOSQ', row.operator) + '</td><td>' + formatGoalMetricCell('SHE_ABERTAS', row.operator) + '</td><td>' + formatGoalMetricCell('SHE_FECHADAS', row.operator) + '</td><td>' + formatGoalMetricCell('IDEIAS_ABERTAS', row.operator) + '</td><td><span class="status ' + (row.general === 'OK' ? 'positive' : 'warning') + '">' + row.general + '</span></td></tr>';
+    }).join('') + '</tbody></table></div></section>';
   }
 
   function teamPage() {

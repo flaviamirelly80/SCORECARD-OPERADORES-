@@ -2,6 +2,7 @@
 (function () {
   'use strict';
   var DEFAULT_TEMP_PASSWORD = 'JDE@1234';
+  var MICHELLE_PASSWORD_RESET_KEY = 'scorecard-michelle-password-reset-v1';
 
   function normalizeRole(role) {
     return role === 'coordinator' || role === 'COORDENADOR' ? 'coordinator' : 'operator';
@@ -133,10 +134,10 @@
       if (migrated.length) {
         var changed = JSON.stringify(migrated) !== JSON.stringify(saved.users);
         if (changed) saveAll(migrated);
-        return migrated;
+        return resetMichellePasswordOnce(migrated);
       }
     }
-    return initialUsers();
+    return resetMichellePasswordOnce(initialUsers());
   }
 
   function saveAll(users) {
@@ -144,6 +145,17 @@
     data = data || {};
     data.users = users;
     if (window.DATA_SERVICE && window.DATA_SERVICE.save) window.DATA_SERVICE.save(data);
+    return users;
+  }
+
+  function resetMichellePasswordOnce(users) {
+    if (localStorage.getItem(MICHELLE_PASSWORD_RESET_KEY)) return users;
+    var michelle = users.find(function (user) { return user.username === 'michellefaria'; });
+    if (!michelle) return users;
+    michelle.password = DEFAULT_TEMP_PASSWORD;
+    michelle.mustChangePassword = true;
+    saveAll(users);
+    localStorage.setItem(MICHELLE_PASSWORD_RESET_KEY, 'true');
     return users;
   }
 

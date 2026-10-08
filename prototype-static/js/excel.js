@@ -18,6 +18,16 @@
     METAS: ['Usuario', 'Ano', 'Mes', 'Indicador', 'Meta'],
   };
 
+  function normalizeLabelCategory(value) {
+    var category = clean(value).toUpperCase();
+    return category === 'SHE' || category === 'MA' ? category : category;
+  }
+
+  function normalizeLabelStatus(value) {
+    var status = clean(value).toUpperCase();
+    return status === 'ABERTA' || status === 'FECHADA' ? status : status;
+  }
+
   function clean(value) { return String(value == null ? '' : value).trim(); }
   function key(value) { return clean(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase(); }
   function canonicalHeader(value) { return key(value).replace(/[^a-z0-9]/g, ''); }
@@ -125,6 +135,14 @@
           if (!normalizedUser || !operatorNames[normalizedUser]) errors.push({ sheet: sheetName, line: line, message: 'Usuário não encontrado: ' + (row.usuario || row.username) + '.' });
         }
         if (sheetName === 'JORNADA' && !STATUS.includes(row.status)) errors.push({ sheet: sheetName, line: line, message: 'Status "' + row.status + '" não é válido.' });
+        if (sheetName === 'ETIQUETAS') {
+          var category = normalizeLabelCategory(row.categoria || row.categoriatabelas || row.category || '');
+          var status = normalizeLabelStatus(row.status || row.statusetiqueta || '');
+          if (!['SHE', 'MA'].includes(category)) errors.push({ sheet: sheetName, line: line, message: 'Categoria da etiqueta inválida. Use SHE ou MA.' });
+          if (!['ABERTA', 'FECHADA', 'PENDENTE', 'EM_ANALISE', 'APROVADA', 'REJEITADA'].includes(status) && !['ABERTA', 'FECHADA'].includes(status)) {
+            errors.push({ sheet: sheetName, line: line, message: 'Status da etiqueta inválido para SHE/MA.' });
+          }
+        }
         if (['JORNADA', 'ETIQUETAS', 'BOS', 'BOSQ', 'IDEIAS'].includes(sheetName) && !validDate(row.data)) errors.push({ sheet: sheetName, line: line, message: 'Data inválida.' });
         if (sheetName === 'METAS' && !['ETIQUETAS', 'BOS', 'BOSQ', 'IDEIAS'].includes((row.indicador || '').toUpperCase())) errors.push({ sheet: sheetName, line: line, message: 'Indicador de meta não reconhecido.' });
         var rowErrors = errors.filter(function (error) { return error.sheet === sheetName && error.line === line; });

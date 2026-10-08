@@ -11,8 +11,8 @@ const operators = [
 
 async function main() {
   const passwordHash = await bcrypt.hash(temporaryPassword, 12);
-  const michelle = await prisma.user.upsert({ where: { username: 'michellefaria' }, update: { name: 'MICHELLE FARIA', role: 'coordinator', coordinatorId: null, active: true }, create: { username: 'michellefaria', name: 'MICHELLE FARIA', role: 'coordinator', area: 'COORDENAÇÃO', jobTitle: 'Coordenadora', active: true, mustChangePassword: true, passwordHash } } });
-  for (const [username, name, area] of operators) await prisma.user.upsert({ where: { username }, update: { name, area, coordinatorId: michelle.id, role: 'operator', active: true }, create: { username, name, area, jobTitle: 'Operador de Processos', coordinatorId: michelle.id, role: 'operator', active: true, mustChangePassword: true, passwordHash } });
+  const michelle = await prisma.user.upsert({ where: { username: 'michellefaria' }, update: { name: 'MICHELLE FARIA', role: 'coordinator', coordinatorId: null, active: true, mustChangePassword: true }, create: { username: 'michellefaria', name: 'MICHELLE FARIA', role: 'coordinator', area: 'COORDENAÇÃO', jobTitle: 'Coordenadora', active: true, mustChangePassword: true, passwordHash } } });
+  for (const [username, name, area] of operators) await prisma.user.upsert({ where: { username }, update: { name, area, coordinatorId: michelle.id, role: 'operator', active: true, mustChangePassword: true }, create: { username, name, area, jobTitle: 'Operador de Processos', coordinatorId: michelle.id, role: 'operator', active: true, mustChangePassword: true, passwordHash } });
 }
 
 main().finally(() => prisma.$disconnect());
