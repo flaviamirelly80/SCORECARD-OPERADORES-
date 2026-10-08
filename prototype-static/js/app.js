@@ -3,6 +3,7 @@
 
   var data = window.PROTOTYPE_DATA;
   var config = window.PORTAL_CONFIG;
+  var portalData = window.PORTAL_DATA_SERVICE;
   window.EXCEL_IMPORT.hydrate(data);
   var persistedUsers = window.USER_SERVICE.getAll();
   data.operators.forEach(function (operator) {
@@ -14,8 +15,8 @@
     user: window.AUTH_SERVICE.currentUser() || null,
     view: 'overview',
     selectedOperator: null,
-    month: 'Abril',
-    year: '2026',
+    month: 'Todos os meses',
+    year: 'Todos',
     area: 'Todas',
     labelCategory: 'SHE',
     usersQuery: '',
@@ -42,12 +43,14 @@
   }
 
   function monthOptions(includeAll) {
-    var months = includeAll ? ['Todos os meses'].concat(config.months) : config.months;
+    var months = ['Todos os meses'].concat(config.months);
     return options(months, state.month);
   }
 
   function yearOptions() {
-    return options(config.years, state.year);
+    var years = portalData.availableYears();
+    if (!years.length) years = config.years;
+    return options(['Todos'].concat(years), state.year);
   }
 
   function logoMarkup(className) {
@@ -169,7 +172,7 @@
     var yearSelect = document.getElementById('year-filter');
     if (yearSelect) { yearSelect.innerHTML = yearOptions(); yearSelect.value = state.year; }
     var metricOperatorSelect = document.getElementById('metric-operator-filter');
-    if (metricOperatorSelect) metricOperatorSelect.addEventListener('change', function () { state.metricOperator = metricOperatorSelect.value; state.selectedOperator = metricOperatorSelect.value === 'Todos' ? null : data.operators.find(function (operator) { return operator.id === metricOperatorSelect.value && operator.role === 'operator'; }) || null; renderShell(); });
+    if (metricOperatorSelect) metricOperatorSelect.addEventListener('change', function () { state.metricOperator = metricOperatorSelect.value; state.selectedOperator = metricOperatorSelect.value === 'Todos' ? null : portalData.getOperators().find(function (operator) { return operator.id === metricOperatorSelect.value && operator.role === 'operator'; }) || null; renderShell(); });
     document.querySelectorAll('[data-label-category]').forEach(function (button) {
       button.addEventListener('click', function () {
         state.labelCategory = button.dataset.labelCategory;
@@ -251,19 +254,56 @@
   }
 
   function teamOperators() {
-    return data.operators.filter(function (operator) {
-      return operator.role === 'operator' && (!state.user || state.user.role !== 'coordinator' || operator.coordinator === state.user.name || operator.coordinator === 'Michelle Faria');
+    return portalData.getOperators().filter(function (operator) {
+      var coordinator = portalData.normalizeArea(operator.coordinator);
+      return operator.role === 'operator' && (!state.user || state.user.role !== 'coordinator' || !coordinator || coordinator === portalData.normalizeArea(state.user.name) || coordinator === 'MICHELLE FARIA');
     });
   }
 
   function visibleOperators() {
-    if (state.user.role !== 'coordinator') return [state.user];
-    if (state.selectedOperator && state.selectedOperator.role === 'operator') return [state.selectedOperator];
-    return teamOperators().filter(function (operator) { return state.area === 'Todas' || operator.area === state.area; });
+    var operators = teamOperators();
+    if (state.selectedOperator && state.selectedOperator.role === 'operator') {
+      operators = operators.filter(function (operator) { return operator.username === state.selectedOperator.username; });
+    } else if (state.user.role !== 'coordinator') {
+      operators = operators.filter(function (operator) { return operator.username === state.user.username; });
+      if (!operators.length) operators = [state.user];
+    }
+    return operators.filter(function (operator) { return state.area === 'Todas' || portalData.normalizeArea(operator.area) === portalData.normalizeArea(state.area); });
   }
 
   function selectedOperatorValue() {
     return state.selectedOperator && state.selectedOperator.role === 'operator' ? state.selectedOperator.id : 'Todos';
+  }
+
+  function portalFilters(overrides) {
+    var selected = state.selectedOperator;
+    if (!selected && state.user && state.user.role !== 'coordinator') selected = state.user;
+    return Object.assign({
+      selectedUser: selected && selected.username,
+      selectedArea: state.area,
+      selectedMonth: state.month,
+      selectedYear: state.year
+    }, overrides || {});
+  }
+
+  function getRecords(sheet) {
+    if (sheet === 'OPERADORES') return portalData.getOperators();
+    if (sheet === 'JORNADA') return portalData.getAttendance();
+    if (sheet === 'ETIQUETAS') return portalData.getLabels();
+    if (sheet === 'BOS') return portalData.getBos();
+    if (sheet === 'BOSQ') return portalData.getBosq();
+    if (sheet === 'IDEIAS') return portalData.getIdeas();
+    if (sheet === 'METAS') return portalData.getGoals();
+    return [];
+  }
+
+  function filteredRecords(sheet, overrides) {
+    return portalData.applyFilters(getRecords(sheet), portalFilters(overrides), portalData.getOperators());
+  }
+
+  function operatorForId(operatorId) {
+    return portalData.getOperators().find(function (operator) { return operator.id === operatorId; }) ||
+      data.operators.find(function (operator) { return operator.id === operatorId; });
   }
 
   function goalConfig() {
@@ -274,6 +314,28 @@
   }
 
   function getOperatorGoalValue(operatorId, metricKey, year, month) {
+    if (portalData.hasImportedData()) {
+      var operator = operatorForId(operatorId);
+      if (!operator) return 0;
+      var aliases = { IDEIAS_ABERTAS: 'IDEIAS' };
+      var indicator = aliases[metricKey] || metricKey;
+      var goalRows = portalData.applyFilters(getRecords('METAS'), {
+        selectedUser: operator.username, selectedArea: state.area, selectedMonth: month, selectedYear: year
+      }, portalData.getOperators()).filter(function (row) {
+        return String(row.indicador || '').trim().toUpperCase().replace(/\s+/g, '_') === indicator;
+      });
+      if (goalRows.length) return goalRows.reduce(function (sum, row) { return sum + Number(String(row.meta || 0).replace(',', '.')); }, 0);
+      var sheet = metricKey === 'BOS' ? 'BOS' : metricKey === 'BOSQ' ? 'BOSQ' : metricKey.indexOf('SHE_') === 0 ? 'ETIQUETAS' : metricKey === 'IDEIAS_ABERTAS' ? 'IDEIAS' : '';
+      var periods = Object.create(null);
+      if (sheet) portalData.applyFilters(getRecords(sheet), {
+        selectedUser: operator.username, selectedArea: state.area, selectedMonth: 'Todos os meses', selectedYear: year
+      }, portalData.getOperators()).forEach(function (row) {
+        var date = portalData.parsePortalDate(row.data);
+        if (date) periods[date.getFullYear() + '-' + (date.getMonth() + 1)] = true;
+      });
+      var periodCount = month === 'Todos os meses' ? Math.max(Object.keys(periods).length, 1) : 1;
+      return Number(goalConfig().monthly[metricKey] || 0) * periodCount;
+    }
     var matrix = (window.PROTOTYPE_DATA && window.PROTOTYPE_DATA.monthlyGoals) || {};
     var record = matrix[operatorId] && matrix[operatorId][year] && matrix[operatorId][year][month];
     if (record && typeof record[metricKey] !== 'undefined') return Number(record[metricKey] || 0);
@@ -284,17 +346,36 @@
   }
 
   function countLabelEntries(operatorId, category, status, year, month) {
+    var operator = operatorForId(operatorId);
+    if (portalData.hasImportedData()) {
+      if (!operator) return 0;
+      return portalData.applyFilters(getRecords('ETIQUETAS'), {
+        selectedUser: operator.username, selectedArea: state.area, selectedMonth: month, selectedYear: year
+      }, portalData.getOperators()).filter(function (entry) {
+        return String(entry.categoria || '').trim().toUpperCase() === category &&
+          String(entry.status || '').trim().toUpperCase() === status;
+      }).length;
+    }
     var labels = (window.PROTOTYPE_DATA && window.PROTOTYPE_DATA.labels) || [];
-    return labels.filter(function (entry) {
-      return entry.userId === operatorId && entry.year === year && entry.month === month && entry.category === category && entry.status === status;
-    }).reduce(function (sum, entry) {
-      return sum + Number(entry.count || 0);
-    }, 0);
+    return labels.filter(function (entry) { return entry.userId === operatorId && entry.year === year && entry.month === month && entry.category === category && entry.status === status; })
+      .reduce(function (sum, entry) { return sum + Number(entry.count || 0); }, 0);
   }
 
   function getMetricRealized(operatorId, metricKey) {
-    var year = state.year || '2026';
-    var month = state.month || 'Abril';
+    var year = state.year;
+    var month = state.month;
+    var operator = operatorForId(operatorId);
+    if (portalData.hasImportedData()) {
+      if (!operator) return 0;
+      var filters = { selectedUser: operator.username, selectedArea: state.area, selectedMonth: month, selectedYear: year };
+      if (metricKey === 'SHE_ABERTAS') return countLabelEntries(operatorId, 'SHE', 'ABERTA', year, month);
+      if (metricKey === 'SHE_FECHADAS') return countLabelEntries(operatorId, 'SHE', 'FECHADA', year, month);
+      if (metricKey === 'BOS') return portalData.applyFilters(getRecords('BOS'), filters, portalData.getOperators()).length;
+      if (metricKey === 'BOSQ') return portalData.applyFilters(getRecords('BOSQ'), filters, portalData.getOperators()).length;
+      if (metricKey === 'IDEIAS_ABERTAS') return portalData.applyFilters(getRecords('IDEIAS'), filters, portalData.getOperators()).length;
+      if (metricKey === 'MA') return portalData.applyFilters(getRecords('ETIQUETAS'), filters, portalData.getOperators()).filter(function (entry) { return String(entry.categoria || '').toUpperCase() === 'MA'; }).length;
+      return 0;
+    }
     if (metricKey === 'SHE_ABERTAS') return countLabelEntries(operatorId, 'SHE', 'ABERTA', year, month) || getOperatorGoalValue(operatorId, 'SHE_ABERTAS', year, month);
     if (metricKey === 'SHE_FECHADAS') return countLabelEntries(operatorId, 'SHE', 'FECHADA', year, month) || getOperatorGoalValue(operatorId, 'SHE_FECHADAS', year, month);
     if (metricKey === 'MA') return countLabelEntries(operatorId, 'MA', 'TOTAL', year, month) || getOperatorGoalValue(operatorId, 'MA', year, month);
@@ -310,14 +391,17 @@
   }
 
   function getMonthlyGoalSummary(operatorId) {
-    var year = state.year || '2026';
-    var month = state.month || 'Abril';
+    var bosGoal = portalData.hasImportedData() ? getOperatorGoalValue(operatorId, 'BOS', state.year, state.month) : goalConfig().monthly.BOS;
+    var bosqGoal = portalData.hasImportedData() ? getOperatorGoalValue(operatorId, 'BOSQ', state.year, state.month) : goalConfig().monthly.BOSQ;
+    var sheOpenGoal = portalData.hasImportedData() ? getOperatorGoalValue(operatorId, 'SHE_ABERTAS', state.year, state.month) : goalConfig().monthly.SHE_ABERTAS;
+    var sheClosedGoal = portalData.hasImportedData() ? getOperatorGoalValue(operatorId, 'SHE_FECHADAS', state.year, state.month) : goalConfig().monthly.SHE_FECHADAS;
+    var ideasGoal = portalData.hasImportedData() ? getOperatorGoalValue(operatorId, 'IDEIAS_ABERTAS', state.year, state.month) : goalConfig().monthly.IDEIAS_ABERTAS;
     var summary = {
-      BOS: { meta: goalConfig().monthly.BOS, realizado: getMetricRealized(operatorId, 'BOS'), status: goalStatusText(getMetricRealized(operatorId, 'BOS'), goalConfig().monthly.BOS) },
-      BOSQ: { meta: goalConfig().monthly.BOSQ, realizado: getMetricRealized(operatorId, 'BOSQ'), status: goalStatusText(getMetricRealized(operatorId, 'BOSQ'), goalConfig().monthly.BOSQ) },
-      SHE_ABERTAS: { meta: goalConfig().monthly.SHE_ABERTAS, realizado: getMetricRealized(operatorId, 'SHE_ABERTAS'), status: goalStatusText(getMetricRealized(operatorId, 'SHE_ABERTAS'), goalConfig().monthly.SHE_ABERTAS) },
-      SHE_FECHADAS: { meta: goalConfig().monthly.SHE_FECHADAS, realizado: getMetricRealized(operatorId, 'SHE_FECHADAS'), status: goalStatusText(getMetricRealized(operatorId, 'SHE_FECHADAS'), goalConfig().monthly.SHE_FECHADAS) },
-      IDEIAS_ABERTAS: { meta: goalConfig().monthly.IDEIAS_ABERTAS, realizado: getMetricRealized(operatorId, 'IDEIAS_ABERTAS'), status: goalStatusText(getMetricRealized(operatorId, 'IDEIAS_ABERTAS'), goalConfig().monthly.IDEIAS_ABERTAS) }
+      BOS: { meta: bosGoal, realizado: getMetricRealized(operatorId, 'BOS'), status: goalStatusText(getMetricRealized(operatorId, 'BOS'), bosGoal) },
+      BOSQ: { meta: bosqGoal, realizado: getMetricRealized(operatorId, 'BOSQ'), status: goalStatusText(getMetricRealized(operatorId, 'BOSQ'), bosqGoal) },
+      SHE_ABERTAS: { meta: sheOpenGoal, realizado: getMetricRealized(operatorId, 'SHE_ABERTAS'), status: goalStatusText(getMetricRealized(operatorId, 'SHE_ABERTAS'), sheOpenGoal) },
+      SHE_FECHADAS: { meta: sheClosedGoal, realizado: getMetricRealized(operatorId, 'SHE_FECHADAS'), status: goalStatusText(getMetricRealized(operatorId, 'SHE_FECHADAS'), sheClosedGoal) },
+      IDEIAS_ABERTAS: { meta: ideasGoal, realizado: getMetricRealized(operatorId, 'IDEIAS_ABERTAS'), status: goalStatusText(getMetricRealized(operatorId, 'IDEIAS_ABERTAS'), ideasGoal) }
     };
     summary.GERAL = {
       status: goalConfig().required.every(function (key) {
@@ -337,6 +421,7 @@
   }
 
   function formatMetricForScope(metric, operators) {
+    if (portalData.hasImportedData()) return metric.value;
     if (state.user.role !== 'coordinator' || state.selectedOperator || operators.length === teamOperators().length) return metric.value;
     var ratio = operators.length / Math.max(teamOperators().length, 1);
     if (metric.id === 'etiquetas' || metric.id === 'bos' || metric.id === 'ideias') {
@@ -354,7 +439,69 @@
 
   function coordinatorFilters() {
     var operators = teamOperators();
-    return '<div class="filters metric-filters"><label>Operador<select id="metric-operator-filter"><option value="Todos"' + (selectedOperatorValue() === 'Todos' ? ' selected' : '') + '>Todos os operadores</option>' + operators.map(function (operator) { return '<option value="' + operator.id + '"' + (selectedOperatorValue() === operator.id ? ' selected' : '') + '>' + escapeHtml(operator.name) + '</option>'; }).join('') + '</select></label><label>Área / Processo<select id="area-filter"><option value="Todas"' + (state.area === 'Todas' ? ' selected' : '') + '>Todas (' + operators.length + ')</option><option value="CAFÉ CRU"' + (state.area === 'CAFÉ CRU' ? ' selected' : '') + '>Café Cru (8)</option><option value="MOAGEM"' + (state.area === 'MOAGEM' ? ' selected' : '') + '>Moagem (3)</option><option value="TORRADOR"' + (state.area === 'TORRADOR' ? ' selected' : '') + '>Torrador (7)</option></select></label><label>Mês<select id="month-filter">' + monthOptions(true) + '</select></label><label>Ano<select id="year-filter">' + yearOptions() + '</select></label></div>';
+    var areas = operators.map(function (operator) { return operator.area; }).filter(function (area, index, all) { return area && all.indexOf(area) === index; }).sort();
+    return '<div class="filters metric-filters"><label>Operador<select id="metric-operator-filter"><option value="Todos"' + (selectedOperatorValue() === 'Todos' ? ' selected' : '') + '>Todos os operadores</option>' + operators.map(function (operator) { return '<option value="' + operator.id + '"' + (selectedOperatorValue() === operator.id ? ' selected' : '') + '>' + escapeHtml(operator.name) + '</option>'; }).join('') + '</select></label><label>Área / Processo<select id="area-filter"><option value="Todas">Todas (' + operators.length + ')</option>' + areas.map(function (area) { return '<option value="' + escapeHtml(area) + '"' + (state.area === area ? ' selected' : '') + '>' + escapeHtml(area) + '</option>'; }).join('') + '</select></label><label>Mês<select id="month-filter">' + monthOptions(true) + '</select></label><label>Ano<select id="year-filter">' + yearOptions() + '</select></label></div>';
+  }
+
+  function countRows(sheet, filters, predicate) {
+    return portalData.applyFilters(getRecords(sheet), filters || portalFilters(), portalData.getOperators()).filter(predicate || function () { return true; }).length;
+  }
+
+  function dashboardMetrics() {
+    if (!portalData.hasImportedData()) {
+      return data.metrics.map(function (metric) { return Object.assign({}, metric, { value: formatMetricForScope(metric, visibleOperators()) }); });
+    }
+    var filters = portalFilters();
+    var journey = countRows('JORNADA', filters);
+    var labels = portalData.applyFilters(getRecords('ETIQUETAS'), filters, portalData.getOperators());
+    var sheOpen = labels.filter(function (row) { return String(row.categoria || '').toUpperCase() === 'SHE' && String(row.status || '').toUpperCase() === 'ABERTA'; }).length;
+    var sheClosed = labels.filter(function (row) { return String(row.categoria || '').toUpperCase() === 'SHE' && String(row.status || '').toUpperCase() === 'FECHADA'; }).length;
+    var maCount = labels.filter(function (row) { return String(row.categoria || '').toUpperCase() === 'MA'; }).length;
+    var bos = countRows('BOS', filters);
+    var bosq = countRows('BOSQ', filters);
+    var ideas = countRows('IDEIAS', filters);
+    return data.metrics.map(function (metric) {
+      var copy = Object.assign({}, metric);
+      var actual = 0, target = goalConfig().monthly.BOS * Math.max(visibleOperators().length, 1);
+      if (metric.id === 'jornada') {
+        actual = journey;
+        copy.value = String(journey);
+        copy.detail = 'registros no período';
+      } else if (metric.id === 'etiquetas') {
+        actual = sheOpen + sheClosed + maCount;
+        target = (goalConfig().monthly.SHE_ABERTAS + goalConfig().monthly.SHE_FECHADAS) * Math.max(visibleOperators().length, 1);
+        copy.value = 'SHE ' + (sheOpen + sheClosed) + ' · MA ' + maCount;
+        copy.detail = 'Abertas ' + sheOpen + ' · Fechadas ' + sheClosed;
+      } else if (metric.id === 'bos') {
+        actual = bos;
+        copy.value = String(bos);
+        copy.detail = 'registros no período';
+      } else if (metric.id === 'bosq') {
+        actual = bosq;
+        target = goalConfig().monthly.BOSQ * Math.max(visibleOperators().length, 1);
+        copy.value = String(bosq);
+        copy.detail = 'registros no período';
+      } else if (metric.id === 'ideias') {
+        actual = ideas;
+        target = goalConfig().monthly.IDEIAS_ABERTAS * Math.max(visibleOperators().length, 1);
+        copy.value = String(ideas);
+        copy.detail = 'ideias criadas no período';
+      }
+      copy.values = [Math.min(100, Math.round(actual / Math.max(target, 1) * 100))];
+      copy.trend = 'No período selecionado';
+      return copy;
+    });
+  }
+
+  function monthlyActivitySeries() {
+    var months = state.month === 'Todos os meses' ? config.months : [state.month];
+    var series = months.map(function (month) {
+      var filters = portalFilters({ selectedMonth: month });
+      var total = ['JORNADA', 'ETIQUETAS', 'BOS', 'BOSQ', 'IDEIAS'].reduce(function (sum, sheet) { return sum + countRows(sheet, filters); }, 0);
+      return { label: month.slice(0, 3), value: total };
+    });
+    var max = series.reduce(function (value, item) { return Math.max(value, item.value); }, 0);
+    return series.map(function (item) { return { label: item.label, value: max ? Math.round(item.value / max * 100) : 0, count: item.value }; });
   }
 
   async function handleExcelFile(event) {
@@ -475,32 +622,39 @@
     var isTeam = state.user.role === 'coordinator' && !state.selectedOperator;
     var operators = visibleOperators();
     var user = isTeam ? null : (state.selectedOperator || state.user);
-    var metrics = data.metrics.map(function (metric) { return Object.assign({}, metric, { value: formatMetricForScope(metric, operators) }); });
+    var metrics = dashboardMetrics();
     var filters = state.user.role === 'coordinator' ? coordinatorFilters() : '<div class="period-picker"><label for="month-filter">Período</label><select id="month-filter">' + monthOptions(false) + '</select></div>';
     var heading = isTeam ? '<p class="overline red">Visão consolidada da equipe</p><h2>Olá, ' + escapeHtml(state.user.name.split(' ')[0]) + '. <span>Veja o desempenho da sua equipe.</span></h2><p class="muted">Resumo dos indicadores dos ' + operators.length + ' operadores no período selecionado.</p>' : '<p class="overline red">Visão individual</p><h2>' + escapeHtml(user.name) + '</h2><p class="muted">Resumo dos indicadores do operador no período selecionado.</p>';
-    var context = isTeam ? teamContextCard(operators) : '<div class="person-strip"><div class="avatar large">' + initials(user.name) + '</div><div><strong>' + escapeHtml(user.name) + '</strong><span>' + escapeHtml(user.area || 'Operações') + ' · ' + escapeHtml(user.function || user.jobTitle || 'Operadora de Produção') + '</span></div><div class="person-meta"><span>Período</span><strong>01 a 30 de abril de 2026</strong></div></div>';
+    var period = state.month === 'Todos os meses' ? 'Todos os meses de ' + state.year : state.month + ' de ' + state.year;
+    var context = isTeam ? teamContextCard(operators) : '<div class="person-strip"><div class="avatar large">' + initials(user.name) + '</div><div><strong>' + escapeHtml(user.name) + '</strong><span>' + escapeHtml(user.area || 'Operações') + ' · ' + escapeHtml(user.function || user.jobTitle || 'Operadora de Produção') + '</span></div><div class="person-meta"><span>Período</span><strong>' + escapeHtml(period) + '</strong></div></div>';
     var back = !isTeam && state.user.role === 'coordinator' ? '<button class="outline-button" id="back-to-team">← Voltar para visão consolidada</button>' : '';
-    return '<section class="welcome-row"><div>' + heading + '</div>' + filters + '</section>' + context + back + '<div class="section-heading"><div><p class="overline">Resumo de performance</p><h3>' + (isTeam ? 'Indicadores consolidados da equipe' : 'Indicadores principais') + '</h3></div><span class="updated">Atualizado hoje, 08:40</span></div><div class="metric-grid">' + metrics.map(metricCard).join('') + '</div><section class="chart-panel"><div class="section-heading"><div><p class="overline">Evolução mensal</p><h3>' + (isTeam ? 'Performance consolidada da equipe' : 'Performance de ' + escapeHtml(user.name)) + '</h3></div><span class="legend"><i></i> Resultado geral</span></div>' + barChart([72, 78, 81, 86, 89, 94]) + '</section>';
+    var activity = monthlyActivitySeries();
+    return '<section class="welcome-row"><div>' + heading + '</div>' + filters + '</section>' + context + back + '<div class="section-heading"><div><p class="overline">Resumo de performance</p><h3>' + (isTeam ? 'Indicadores consolidados da equipe' : 'Indicadores principais') + '</h3></div><span class="updated">Atualizado com dados do período</span></div><div class="metric-grid">' + metrics.map(metricCard).join('') + '</div><section class="chart-panel"><div class="section-heading"><div><p class="overline">Evolução mensal</p><h3>' + (isTeam ? 'Registros da equipe' : 'Registros de ' + escapeHtml(user.name)) + '</h3></div><span class="legend"><i></i> Registros importados</span></div>' + barChart(activity.map(function (item) { return item.value; }), activity.map(function (item) { return item.label; })) + '</section>';
   }
 
   function metricCard(metric) {
     return '<article class="metric-card"><div class="metric-top"><span class="metric-icon ' + metric.tone + '">' + metric.icon + '</span><span class="metric-trend ' + metric.tone + '">' + metric.trend + '</span></div><h4>' + metric.title + '</h4><div class="metric-value">' + metric.value + '</div><div class="metric-detail"><span>' + metric.detail + '</span><span class="mini-progress"><i style="width:' + metric.values[metric.values.length - 1] + '%"></i></span></div></article>';
   }
 
-  function barChart(values) {
-    return '<div class="bar-chart">' + values.map(function (value, index) { return '<div class="bar-column"><span>' + value + '%</span><div class="bar-track"><i style="height:' + value + '%"></i></div><small>' + data.months[index] + '</small></div>'; }).join('') + '</div>';
+  function barChart(values, labels) {
+    return '<div class="bar-chart">' + values.map(function (value, index) { return '<div class="bar-column"><span>' + value + '%</span><div class="bar-track"><i style="height:' + value + '%"></i></div><small>' + (labels ? labels[index] : data.months[index]) + '</small></div>'; }).join('') + '</div>';
   }
 
   function journeyPage() {
     var isTeam = state.user.role === 'coordinator' && !state.selectedOperator;
     var operators = visibleOperators();
+    var journey = filteredRecords('JORNADA');
     var title = isTeam ? 'Jornada consolidada da equipe' : 'Minha jornada';
     var description = isTeam ? 'Total de jornada dos ' + operators.length + ' operadores no período selecionado.' : 'Acompanhe seus registros de ponto, folgas e ocorrências.';
     var filters = state.user.role === 'coordinator' ? coordinatorFilters() : '';
-    return '<section class="page-intro"><p class="overline red">Controle de presença</p><h2>' + title + '</h2><p class="muted">' + description + '</p></section>' + filters + '<div class="summary-grid"><div><span>Dias trabalhados</span><strong>' + (isTeam ? 19 * operators.length : 19) + '</strong><small>' + (isTeam ? 'total da equipe' : 'de 22 dias úteis') + '</small></div><div><span>Horas realizadas</span><strong>' + (isTeam ? 168 * operators.length + 'h' : '168h') + '</strong><small>período selecionado</small></div><div><span>Banco de horas</span><strong>+06:30</strong><small class="positive">Saldo consolidado</small></div><div><span>Ocorrências</span><strong>' + (isTeam ? 2 * operators.length : '02') + '</strong><small>atrasos e extras</small></div></div><section class="table-panel"><div class="table-heading"><div><p class="overline">Abril 2026</p><h3>' + (isTeam ? 'Resumo de jornada da equipe' : 'Histórico de jornada') + '</h3></div><button class="outline-button">Exportar relatório</button></div><div class="table-scroll"><table><thead><tr><th>Data</th><th>Status</th><th>Horas</th><th>Observação</th></tr></thead><tbody>' + data.journey.map(function (item) { return '<tr><td><strong>' + item.date + '</strong><small>' + item.day + '</small></td><td><span class="status ' + statusClass(item.status) + '">' + item.status + '</span></td><td>' + item.hours + '</td><td class="note">' + item.note + '</td></tr>'; }).join('') + '</tbody></table></div></section>';
+    var hours = journey.reduce(function (sum, row) { var match = String(row.horas || row.hours || '').match(/^(\d{1,2}):(\d{2})/); return sum + (match ? Number(match[1]) + Number(match[2]) / 60 : 0); }, 0);
+    var period = state.month === 'Todos os meses' ? state.year : state.month + ' de ' + state.year;
+    var rows = journey.map(function (item) { var date = item.data || item.date || ''; var displayDate = date instanceof Date ? date.toLocaleDateString('pt-BR') : String(date); return '<tr><td><strong>' + escapeHtml(displayDate) + '</strong></td><td><span class="status ' + statusClass(item.status) + '">' + escapeHtml(item.status || '') + '</span></td><td>' + escapeHtml(item.horas || item.hours || '') + '</td><td class="note">' + escapeHtml(item.observacao || item.note || '') + '</td></tr>'; }).join('');
+    return '<section class="page-intro"><p class="overline red">Controle de presença</p><h2>' + title + '</h2><p class="muted">' + description + '</p></section>' + filters + '<div class="summary-grid"><div><span>Registros de jornada</span><strong>' + journey.length + '</strong><small>' + escapeHtml(period) + '</small></div><div><span>Horas registradas</span><strong>' + Math.floor(hours) + 'h</strong><small>período selecionado</small></div><div><span>Ocorrências</span><strong>' + journey.filter(function (row) { return /atraso|falta|saiu mais cedo/i.test(row.status || ''); }).length + '</strong><small>atrasos e ausências</small></div><div><span>Operadores</span><strong>' + operators.length + '</strong><small>no escopo atual</small></div></div><section class="table-panel"><div class="table-heading"><div><p class="overline">' + escapeHtml(period) + '</p><h3>' + (isTeam ? 'Resumo de jornada da equipe' : 'Histórico de jornada') + '</h3></div><button class="outline-button">Exportar relatório</button></div><div class="table-scroll"><table><thead><tr><th>Data</th><th>Status</th><th>Horas</th><th>Observação</th></tr></thead><tbody>' + (rows || '<tr><td colspan="4">Nenhum registro no período selecionado.</td></tr>') + '</tbody></table></div></section>';
   }
 
   function metricPage(type) {
+    if (portalData.hasImportedData()) return importedMetricPage(type);
     var metric = data.metrics.find(function (item) { return item.id === type; }) || data.metrics[1];
     var goal = type === 'bos' ? '40' : '90%';
     var annual = state.month === 'Todos os meses';
@@ -513,7 +667,30 @@
     return '<section class="page-intro"><p class="overline red">Indicador operacional</p><h2>' + metric.title + '</h2><p class="muted">BOS e BOSQ possuem acompanhamento independente.</p></section>' + filter + '<div class="indicator-hero"><div class="metric-icon large-icon ' + metric.tone + '">' + metric.icon + '</div><div><span>' + scopeLabel + '</span><strong>' + scopedMetric.value + '</strong><small>' + scopedMetric.detail + ' · <b class="positive">' + scopedMetric.trend + '</b></small></div><div class="hero-goal"><span>' + (annual ? 'Meta anual' : 'Meta mensal') + '</span><strong>' + goal + '</strong><small>' + periodLabel + '</small></div></div><section class="chart-panel"><div class="section-heading"><div><p class="overline">Evolução mensal de ' + metric.title + '</p><h3>' + (state.user.role === 'coordinator' && !state.selectedOperator ? 'Resultado consolidado x meta' : 'Resultado x meta') + '</h3></div><span class="legend"><i class="coffee-dot"></i> ' + metric.title + '</span></div>' + barChart(metric.values) + '</section><div class="detail-grid"><div class="detail-card"><span>Meta</span><strong>' + goal + '</strong><small>' + (annual ? 'Objetivo anual' : 'Objetivo do mês') + '</small></div><div class="detail-card"><span>Realizado</span><strong>' + scopedMetric.value + '</strong><small>' + periodLabel + '</small></div><div class="detail-card"><span>% atingido</span><strong>' + metric.values[metric.values.length - 1] + '%</strong><small class="positive">Indicador exclusivo de ' + metric.title + '</small></div></div><section class="table-panel"><div class="table-heading"><div><p class="overline">Histórico de registros</p><h3>' + metric.title + '</h3></div><span class="updated">Sem mistura com ' + (type === 'bos' ? 'BOSQ' : 'BOS') + '</span></div><p class="muted metric-empty">Os registros detalhados serão exibidos aqui após a importação da aba ' + type.toUpperCase() + '.</p></section>';
   }
 
+  function importedMetricPage(type) {
+    var sheet = type.toUpperCase();
+    var metric = data.metrics.find(function (item) { return item.id === type; }) || data.metrics[1];
+    var records = filteredRecords(sheet);
+    var operators = visibleOperators();
+    var goal = Number(goalConfig().monthly[sheet] || 5) * Math.max(operators.length, 1);
+    var attainment = Math.min(100, Math.round(records.length / Math.max(goal, 1) * 100));
+    var period = state.month === 'Todos os meses' ? state.year : state.month + ' de ' + state.year;
+    var months = state.month === 'Todos os meses' ? config.months : [state.month];
+    var totals = months.map(function (month) {
+      return countRows(sheet, portalFilters({ selectedMonth: month }));
+    });
+    var max = totals.reduce(function (value, count) { return Math.max(value, count); }, 0);
+    var chart = barChart(totals.map(function (count) { return max ? Math.round(count / max * 100) : 0; }), months.map(function (month) { return month.slice(0, 3); }));
+    var rows = records.map(function (row) {
+      var operator = operators.find(function (item) { return item.username === portalData.normalizeUsuario(row.usuario); });
+      return '<tr><td>' + escapeHtml(operator ? operator.name : row.usuario || '') + '</td><td>' + escapeHtml(String(row.data || '')) + '</td><td>' + escapeHtml(String(row.numerobos || row.numerobosq || '')) + '</td><td>' + escapeHtml(String(row.descricao || row.status || '')) + '</td></tr>';
+    }).join('');
+    var filter = state.user.role === 'coordinator' ? coordinatorFilters() : '<div class="filters metric-filters"><label>Mês<select id="month-filter">' + monthOptions(true) + '</select></label><label>Ano<select id="year-filter">' + yearOptions() + '</select></label></div>';
+    return '<section class="page-intro"><p class="overline red">Indicador operacional</p><h2>' + metric.title + '</h2><p class="muted">BOS e BOSQ possuem acompanhamento independente.</p></section>' + filter + '<div class="indicator-hero"><div class="metric-icon large-icon ' + metric.tone + '">' + metric.icon + '</div><div><span>Resultado do período</span><strong>' + records.length + '</strong><small>registros importados</small></div><div class="hero-goal"><span>Meta mensal por operador</span><strong>' + goalConfig().monthly[sheet] + '</strong><small>' + escapeHtml(period) + '</small></div></div><section class="chart-panel"><div class="section-heading"><div><p class="overline">Evolução mensal de ' + metric.title + '</p><h3>Registros por mês</h3></div><span class="legend"><i class="coffee-dot"></i> ' + metric.title + '</span></div>' + chart + '</section><div class="detail-grid"><div class="detail-card"><span>Meta do escopo</span><strong>' + goal + '</strong><small>por operador no período</small></div><div class="detail-card"><span>Realizado</span><strong>' + records.length + '</strong><small>' + escapeHtml(period) + '</small></div><div class="detail-card"><span>Atingimento</span><strong>' + attainment + '%</strong><small>' + metric.title + '</small></div></div><section class="table-panel"><div class="table-heading"><div><p class="overline">Histórico de registros</p><h3>' + metric.title + '</h3></div><span class="updated">Sem mistura com ' + (type === 'bos' ? 'BOSQ' : 'BOS') + '</span></div><div class="table-scroll"><table><thead><tr><th>Operador</th><th>Data</th><th>Identificador</th><th>Descrição / Status</th></tr></thead><tbody>' + (rows || '<tr><td colspan="4">Nenhum registro no período selecionado.</td></tr>') + '</tbody></table></div></section>';
+  }
+
   function ideasPage() {
+    if (portalData.hasImportedData()) return importedIdeasPage();
     var ideas = data.ideas;
     var isTeam = state.user.role === 'coordinator' && !state.selectedOperator;
     var operators = visibleOperators();
@@ -524,7 +701,24 @@
     return '<section class="page-intro"><p class="overline red">Cultura de melhoria</p><h2>' + (isTeam ? 'Ideias de melhoria da equipe' : 'Ideias de melhoria') + '</h2><p class="muted">' + (isTeam ? 'Resumo consolidado dos ' + operators.length + ' operadores.' : 'Transforme boas observações em melhorias para o nosso trabalho.') + '</p></section>' + filters + '<div class="ideas-grid"><div class="idea-main"><span class="idea-symbol">✦</span><span>Quantidade cadastrada</span><strong>' + registered + '</strong><small>Meta de ' + goal + ' ideias no período</small><div class="goal-progress"><i style="width:' + (registered / Math.max(goal, 1) * 100) + '%"></i></div><b>' + Math.round(registered / Math.max(goal, 1) * 100) + '% da meta atingida</b></div><div class="idea-stat"><span>Em análise</span><strong>' + (isTeam ? Math.round(ideas.analysis * ratio) : ideas.analysis) + '</strong><small>Aguardando avaliação</small></div><div class="idea-stat"><span>Aprovadas</span><strong>' + (isTeam ? Math.round(ideas.approved * ratio) : ideas.approved) + '</strong><small>Boas ideias reconhecidas</small></div><div class="idea-stat"><span>Implementadas</span><strong>' + (isTeam ? Math.round(ideas.implemented * ratio) : ideas.implemented) + '</strong><small>Já geraram impacto</small></div></div><section class="quote-panel"><span>“</span><p>Uma melhoria começa quando alguém decide observar com atenção.</p><small>Programa Ideias de Melhoria</small></section>';
   }
 
+  function importedIdeasPage() {
+    var ideas = filteredRecords('IDEIAS');
+    var open = ideas.filter(function (item) { return !item.status || String(item.status).toUpperCase() === 'ABERTA'; }).length;
+    var analysis = ideas.filter(function (item) { return /ANALISE|ANÁLISE|ANDAMENTO/i.test(item.status || ''); }).length;
+    var approved = ideas.filter(function (item) { return /APROVAD|RESOLVID/i.test(item.status || ''); }).length;
+    var implemented = ideas.filter(function (item) { return /IMPLEMENTAD|CONCLU[IÍ]D/i.test(item.status || ''); }).length;
+    var goal = goalConfig().monthly.IDEIAS_ABERTAS * Math.max(visibleOperators().length, 1);
+    var percent = Math.round(open / Math.max(goal, 1) * 100);
+    var filters = state.user.role === 'coordinator' ? coordinatorFilters() : '';
+    var rows = ideas.map(function (item) {
+      var operator = portalData.getOperators().find(function (entry) { return entry.username === portalData.normalizeUsuario(item.usuario); });
+      return '<tr><td>' + escapeHtml(operator ? operator.name : item.usuario || '') + '</td><td>' + escapeHtml(String(item.data || '')) + '</td><td>' + escapeHtml(String(item.titulo || '')) + '</td><td>' + escapeHtml(String(item.status || '')) + '</td><td>' + escapeHtml(String(item.resultado || '')) + '</td></tr>';
+    }).join('');
+    return '<section class="page-intro"><p class="overline red">Cultura de melhoria</p><h2>Ideias de melhoria</h2><p class="muted">Contagem pelo mês de criação registrado na importação.</p></section>' + filters + '<div class="ideas-grid"><div class="idea-main"><span class="idea-symbol">✦</span><span>Quantidade cadastrada</span><strong>' + ideas.length + '</strong><small>Meta de ' + goal + ' ideias no período</small><div class="goal-progress"><i style="width:' + Math.min(percent, 100) + '%"></i></div><b>' + percent + '% da meta atingida</b></div><div class="idea-stat"><span>Em análise</span><strong>' + analysis + '</strong><small>Aguardando avaliação</small></div><div class="idea-stat"><span>Aprovadas / resolvidas</span><strong>' + approved + '</strong><small>Boas ideias reconhecidas</small></div><div class="idea-stat"><span>Implementadas</span><strong>' + implemented + '</strong><small>Já geraram impacto</small></div></div><section class="table-panel"><div class="table-heading"><div><p class="overline">Registros importados</p><h3>Ideias</h3></div></div><div class="table-scroll"><table><thead><tr><th>Operador</th><th>Data de criação</th><th>Título</th><th>Status atual</th><th>Resultado</th></tr></thead><tbody>' + (rows || '<tr><td colspan="5">Nenhuma ideia no período selecionado.</td></tr>') + '</tbody></table></div></section>';
+  }
+
   function labelsPage() {
+    if (portalData.hasImportedData()) return importedLabelsPage();
     var category = state.labelCategory === 'MA' ? 'MA' : 'SHE';
     var rows = data.operators.filter(function (operator) { return operator.role === 'operator' && (state.area === 'Todas' || operator.area === state.area); });
     var summary = rows.map(function (operator) {
@@ -545,7 +739,40 @@
     }).join('') + '</tbody></table></div></section>';
   }
 
+  function importedLabelsPage() {
+    var category = state.labelCategory === 'MA' ? 'MA' : 'SHE';
+    var operators = visibleOperators();
+    var filtered = filteredRecords('ETIQUETAS');
+    var summary = operators.map(function (operator) {
+      var records = filtered.filter(function (row) { return portalData.normalizeUsuario(row.usuario) === portalData.normalizeUsuario(operator.username); });
+      var sheOpen = records.filter(function (row) { return String(row.categoria || '').toUpperCase() === 'SHE' && String(row.status || '').toUpperCase() === 'ABERTA'; }).length;
+      var sheClosed = records.filter(function (row) { return String(row.categoria || '').toUpperCase() === 'SHE' && String(row.status || '').toUpperCase() === 'FECHADA'; }).length;
+      var maTotal = records.filter(function (row) { return String(row.categoria || '').toUpperCase() === 'MA'; }).length;
+      return { operator: operator, sheOpen: sheOpen, sheClosed: sheClosed, maTotal: maTotal };
+    });
+    var sheOpen = summary.reduce(function (sum, row) { return sum + row.sheOpen; }, 0);
+    var sheClosed = summary.reduce(function (sum, row) { return sum + row.sheClosed; }, 0);
+    var maTotal = summary.reduce(function (sum, row) { return sum + row.maTotal; }, 0);
+    var totals = category === 'SHE' ? { main: sheOpen, secondary: sheClosed } : { main: maTotal, secondary: 0 };
+    var tableRows = summary.map(function (row) {
+      var primary = category === 'SHE' ? row.sheOpen : row.maTotal;
+      var secondary = category === 'SHE' ? row.sheClosed : 0;
+      var status = category === 'SHE' ? (row.sheOpen >= 2 && row.sheClosed >= 2 ? 'OK' : 'NÃO OK') : (row.maTotal > 0 ? 'OK' : 'NÃO OK');
+      return '<tr><td><strong>' + escapeHtml(row.operator.name) + '</strong></td><td>' + escapeHtml(row.operator.area) + '</td><td>' + primary + '</td><td>' + secondary + '</td><td><span class="status ' + (status === 'OK' ? 'positive' : 'warning') + '">' + status + '</span></td></tr>';
+    }).join('');
+    var filters = '<div class="filters"><div><label>Categoria</label><div class="tab-group">' + ['SHE', 'MA'].map(function (item) { return '<button class="outline-button" data-label-category="' + item + '" ' + (category === item ? 'style="background:#f5efe8;border-color:#ceb8a7;"' : '') + '>' + item + '</button>'; }).join('') + '</div></div>';
+    if (state.user.role === 'coordinator') {
+      var allOperators = teamOperators();
+      filters += '<label>Operador<select id="metric-operator-filter"><option value="Todos"' + (selectedOperatorValue() === 'Todos' ? ' selected' : '') + '>Todos os operadores</option>' + allOperators.map(function (operator) { return '<option value="' + operator.id + '"' + (selectedOperatorValue() === operator.id ? ' selected' : '') + '>' + escapeHtml(operator.name) + '</option>'; }).join('') + '</select></label>';
+      filters += '<label>Área / Processo<select id="area-filter"><option value="Todas">Todas</option>' + allOperators.map(function (item) { return item.area; }).filter(function (area, index, all) { return area && all.indexOf(area) === index; }).map(function (area) { return '<option value="' + escapeHtml(area) + '"' + (state.area === area ? ' selected' : '') + '>' + escapeHtml(area) + '</option>'; }).join('') + '</select></label>';
+    }
+    filters += '<label>Mês<select id="month-filter">' + monthOptions(true) + '</select></label><label>Ano<select id="year-filter">' + yearOptions() + '</select></label></div>';
+    var heading = category === 'SHE' ? 'Etiquetas SHE' : 'Etiquetas MA';
+    return '<section class="page-intro"><p class="overline red">Indicadores de qualidade</p><h2>Etiquetas</h2><p class="muted">Dados importados filtrados por operador e data.</p></section>' + filters + '<div class="summary-grid"><div><span>' + heading + '</span><strong>' + totals.main + '</strong><small>' + (category === 'SHE' ? 'Abertas' : 'Total') + '</small></div><div><span>' + (category === 'SHE' ? 'Etiquetas SHE fechadas' : 'Registros de etiquetas') + '</span><strong>' + (category === 'SHE' ? totals.secondary : filtered.length) + '</strong><small>' + (category === 'SHE' ? 'Fechadas' : 'no período') + '</small></div><div><span>Meta mensal por operador</span><strong>' + (category === 'SHE' ? '2 / 2' : '—') + '</strong><small>' + category + '</small></div><div><span>Operadores</span><strong>' + operators.length + '</strong><small>no escopo atual</small></div></div><section class="table-panel"><div class="table-heading"><div><p class="overline">' + heading + '</p><h3>' + category + '</h3></div></div><div class="table-scroll"><table><thead><tr><th>Operador</th><th>Área</th><th>' + (category === 'SHE' ? 'Abertas' : 'MA') + '</th><th>' + (category === 'SHE' ? 'Fechadas' : 'Quantidade') + '</th><th>Status</th></tr></thead><tbody>' + (tableRows || '<tr><td colspan="5">Nenhuma etiqueta no período selecionado.</td></tr>') + '</tbody></table></div></section>';
+  }
+
   function areaGoalsPage() {
+    if (portalData.hasImportedData()) return importedAreaGoalsPage();
     var rows = data.operators.filter(function (operator) { return operator.role === 'operator' && (state.area === 'Todas' || operator.area === state.area); });
     var year = state.year || '2026';
     var month = state.month || 'Abril';
@@ -571,9 +798,37 @@
     }).join('') + '</tbody></table></div></section>';
   }
 
+  function importedAreaGoalsPage() {
+    var rows = visibleOperators();
+    var summaries = rows.map(function (operator) {
+      var summary = getMonthlyGoalSummary(operator.id);
+      return { operator: operator, summary: summary, general: summary.GERAL.status };
+    });
+    var okCount = summaries.filter(function (row) { return row.general === 'OK'; }).length;
+    var metrics = ['BOS', 'BOSQ', 'SHE_ABERTAS', 'SHE_FECHADAS', 'IDEIAS_ABERTAS'];
+    var period = state.month === 'Todos os meses' ? state.year : state.month + ' / ' + state.year;
+    var stats = '<div class="summary-grid"><div><span>Operadores</span><strong>' + summaries.length + '</strong><small>' + escapeHtml(period) + '</small></div><div><span>Operadores OK</span><strong>' + okCount + '</strong><small>Meta atendida</small></div><div><span>Operadores NÃO OK</span><strong>' + (summaries.length - okCount) + '</strong><small>Com pendência</small></div><div><span>% da equipe</span><strong>' + (summaries.length ? Math.round(okCount / summaries.length * 100) : 0) + '%</strong><small>meta atendida</small></div></div>';
+    var breakdown = '<div class="detail-grid">' + metrics.map(function (key) {
+      var count = summaries.filter(function (row) { return row.summary[key].status === 'OK'; }).length;
+      return '<div class="detail-card"><span>' + key.replace('_', ' ') + '</span><strong>' + count + '/' + summaries.length + '</strong><small>Meta por operador</small></div>';
+    }).join('') + '</div>';
+    var body = summaries.map(function (row) {
+      return '<tr><td><strong>' + escapeHtml(row.operator.name) + '</strong><small>' + escapeHtml(row.operator.area) + '</small></td><td>' + formatGoalMetricCell('BOS', row.operator) + '</td><td>' + formatGoalMetricCell('BOSQ', row.operator) + '</td><td>' + formatGoalMetricCell('SHE_ABERTAS', row.operator) + '</td><td>' + formatGoalMetricCell('SHE_FECHADAS', row.operator) + '</td><td>' + formatGoalMetricCell('IDEIAS_ABERTAS', row.operator) + '</td><td><span class="status ' + (row.general === 'OK' ? 'positive' : 'warning') + '">' + row.general + '</span></td></tr>';
+    }).join('');
+    var filters = state.user.role === 'coordinator' ? coordinatorFilters() : '<div class="filters"><label>Mês<select id="month-filter">' + monthOptions(true) + '</select></label><label>Ano<select id="year-filter">' + yearOptions() + '</select></label></div>';
+    return '<section class="page-intro"><p class="overline red">Acompanhamento da área</p><h2>Metas da área</h2><p class="muted">Realizados calculados a partir dos registros importados no período selecionado.</p></section>' + filters + stats + breakdown + '<section class="table-panel"><div class="table-heading"><div><p class="overline">Performance da equipe</p><h3>Consolidado</h3></div><span class="updated">' + escapeHtml(period) + '</span></div><div class="table-scroll"><table><thead><tr><th>Colaborador</th><th>BOS</th><th>BOSQ</th><th>SHE AB.</th><th>SHE FECH.</th><th>IDEIA</th><th>Geral</th></tr></thead><tbody>' + (body || '<tr><td colspan="7">Nenhum operador no período e área selecionados.</td></tr>') + '</tbody></table></div></section>';
+  }
+
   function teamPage() {
-    var rows = data.operators.filter(function (operator) { return operator.role === 'operator' && (state.area === 'Todas' || operator.area === state.area); });
-    var teamTotals = data.operators.filter(function (operator) { return operator.role === 'operator'; });
+    var sourceOperators = portalData.getOperators();
+    var rows = sourceOperators.filter(function (operator) { return operator.role === 'operator' && (state.area === 'Todas' || portalData.normalizeArea(operator.area) === portalData.normalizeArea(state.area)); });
+    rows = rows.map(function (operator) {
+      if (!portalData.hasImportedData()) return operator;
+      var summary = getMonthlyGoalSummary(operator.id);
+      var passing = ['BOS', 'BOSQ', 'SHE_ABERTAS', 'SHE_FECHADAS', 'IDEIAS_ABERTAS'].filter(function (key) { return summary[key].status === 'OK'; }).length;
+      return Object.assign({}, operator, { score: passing * 20, status: summary.GERAL.status });
+    });
+    var teamTotals = sourceOperators.filter(function (operator) { return operator.role === 'operator'; });
     var areaCounts = { 'CAFÉ CRU': 0, MOAGEM: 0, TORRADOR: 0 };
     teamTotals.forEach(function (operator) { if (areaCounts[operator.area] != null) areaCounts[operator.area] += 1; });
     return '<section class="welcome-row"><div><p class="overline red">Gestão de performance</p><h2>Minha equipe</h2><p class="muted">Selecione um operador para visualizar seus indicadores individuais.</p></div><button class="primary-button compact" data-view="overview">Ver selecionado ' + icon('arrow') + '</button></section><div class="filters"><label>Pesquisar operador<input id="operator-search" type="search" placeholder="Nome do operador..."></label><label>Mês<select id="month-filter"><option>Abril</option><option>Março</option><option>Fevereiro</option></select></label><label>Ano<select id="year-filter"><option>2026</option><option>2025</option></select></label><label>Área<select id="area-filter"><option>Todas</option><option value="CAFÉ CRU">Café Cru (' + areaCounts['CAFÉ CRU'] + ')</option><option value="MOAGEM">Moagem (' + areaCounts.MOAGEM + ')</option><option value="TORRADOR">Torrador (' + areaCounts.TORRADOR + ')</option></select></label></div><section class="table-panel team-panel"><div class="table-heading"><div><p class="overline">' + rows.length + ' operadores</p><h3>Performance individual</h3></div><span class="updated">Total da equipe: ' + teamTotals.length + '</span></div><div class="table-scroll"><table><thead><tr><th>Operador</th><th>Área</th><th>Turno</th><th>Scorecard</th><th>Status</th><th></th></tr></thead><tbody>' + rows.map(function (operator) { return '<tr data-operator-row="' + escapeHtml(operator.name + ' ' + operator.area) + '"><td><div class="table-person"><span class="avatar small-avatar">' + operator.initials + '</span><strong>' + operator.name + '</strong></div></td><td>' + operator.area + '</td><td>' + operator.shift + '</td><td><div class="score-cell"><strong>' + operator.score + '%</strong><span><i style="width:' + operator.score + '%"></i></span></div></td><td><span class="status ' + (operator.score > 90 ? 'on-track' : operator.score > 80 ? 'neutral' : 'warning') + '">' + operator.status + '</span></td><td><button class="table-action" data-select-operator="' + operator.id + '" aria-label="Ver indicadores de ' + operator.name + '">' + icon('arrow') + '</button></td></tr>'; }).join('') + '</tbody></table></div></section>';

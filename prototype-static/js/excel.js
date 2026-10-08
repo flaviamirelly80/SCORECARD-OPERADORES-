@@ -192,9 +192,9 @@
     });
     result.valid.forEach(function (item) {
       var id = identity(item), isExistingOperator = item.sheet === 'OPERADORES' && existingOperators[normalizeUsuario(item.row.usuario)];
-      if (seen[id] || isExistingOperator || (existingKeys && existingKeys[id])) {
+      if (seen[id]) result.counts.duplicates += 1;
+      else if (isExistingOperator || (existingKeys && existingKeys[id])) {
         result.counts.updates += 1;
-        result.counts.duplicates += seen[id] ? 1 : 0;
       } else result.counts.newRecords += 1;
       seen[id] = true;
     });
@@ -204,10 +204,17 @@
   function save(snapshot) { localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot)); }
 
   function commit(result, target) {
-    var snapshot = load() || { records: {} }, added = 0, updated = 0;
-    result.valid.slice().sort(function (left, right) { return (left.sheet === 'OPERADORES' ? 0 : 1) - (right.sheet === 'OPERADORES' ? 0 : 1); }).forEach(function (item) { var id = identity(item), wasExisting = Boolean(snapshot.records[id]); snapshot.records[id] = item; if (wasExisting) updated += 1; else added += 1; });
+    var snapshot = load() || { records: {} }, added = 0, updated = 0, duplicates = 0, imported = Object.create(null);
+    result.valid.slice().sort(function (left, right) { return (left.sheet === 'OPERADORES' ? 0 : 1) - (right.sheet === 'OPERADORES' ? 0 : 1); }).forEach(function (item) {
+      var id = identity(item);
+      if (imported[id]) { duplicates += 1; return; }
+      imported[id] = true;
+      var wasExisting = Boolean(snapshot.records[id]);
+      snapshot.records[id] = item;
+      if (wasExisting) updated += 1; else added += 1;
+    });
     save(snapshot);
-    return { added: added, updated: updated, ignored: result.errors.length, errors: result.errors.length, importedAt: new Date().toLocaleString('pt-BR'), snapshot: snapshot };
+    return { added: added, updated: updated, duplicates: duplicates, ignored: result.errors.length, errors: result.errors.length, importedAt: new Date().toLocaleString('pt-BR'), snapshot: snapshot };
   }
 
   function applyToData(report, target) {
