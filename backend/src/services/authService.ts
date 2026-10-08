@@ -4,7 +4,12 @@ import { config } from '../config.js';
 import type { AuthUser } from '../types.js';
 import { signToken } from '../middleware/auth.js';
 
-export const normalizeUsername = (username: string): string => username.trim().toLowerCase();
+export const normalizeUsuario = (value: unknown): string => {
+  if (value == null) return '';
+  const usuario = String(value).trim().replace(/^(\d+)\.0+$/, '$1');
+  return usuario.toUpperCase();
+};
+export const normalizeUsername = (username: string): string => normalizeUsuario(username).toLowerCase();
 export const publicUser = (user: { id: string; username: string; name: string; role: string; area: string | null; jobTitle: string | null; shift: string | null; active: boolean; mustChangePassword: boolean; coordinatorId: string | null; }) => ({
   id: user.id, username: user.username, name: user.name, role: user.role, area: user.area, jobTitle: user.jobTitle, shift: user.shift, active: user.active, mustChangePassword: user.mustChangePassword, coordinatorId: user.coordinatorId,
 });

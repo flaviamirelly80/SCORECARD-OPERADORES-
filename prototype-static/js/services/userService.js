@@ -4,8 +4,15 @@
   var DEFAULT_TEMP_PASSWORD = 'JDE@1234';
   var MICHELLE_PASSWORD_RESET_KEY = 'scorecard-michelle-password-reset-v1';
 
+  function normalizeUsuario(value) {
+    if (value == null) return '';
+    var usuario = String(value).trim();
+    if (/^\d+\.0+$/.test(usuario)) usuario = usuario.replace(/\.0+$/, '');
+    return usuario.toUpperCase();
+  }
+
   function normalizeRole(role) {
-    return role === 'coordinator' || role === 'COORDENADOR' ? 'coordinator' : 'operator';
+    return String(role || '').trim().toLowerCase().indexOf('coordenador') >= 0 || String(role || '').trim().toLowerCase() === 'coordinator' ? 'coordinator' : 'operator';
   }
 
   function normalizeActive(user) {
@@ -38,7 +45,7 @@
     var username = base || 'usuario';
     var candidate = username;
     var index = 2;
-    while (users.some(function (user) { return user.username === candidate && user.id !== ignoreId; })) {
+    while (users.some(function (user) { return normalizeUsuario(user.username) === normalizeUsuario(candidate) && user.id !== ignoreId; })) {
       candidate = username + index;
       index += 1;
     }
@@ -88,7 +95,7 @@
     var name = normalizeUsername(user.name || '');
     if (user.id === 'coord-01' || name === 'michelle.faria' || name === 'michellefaria') return 'michellefaria';
     if (user.id === 'op-01' || name === 'edilson.coimbra.de.souza' || name === 'edilson.souza') return 'edilson.souza';
-    return normalizeLoginUsername(user.username || user.email || user.name || '');
+    return user.username ? String(user.username).trim() : normalizeLoginUsername(user.email || user.name || '');
   }
 
   function migrateUsers(rawUsers) {
@@ -99,7 +106,8 @@
       var username = canonicalUsername(user);
       if (!username) return;
       var id = String(user.id || 'u-' + Date.now() + '-' + migrated.length);
-      var existing = byUsername[username] || byId[id];
+      var usernameKey = normalizeUsuario(username);
+      var existing = byUsername[usernameKey] || byId[id];
       if (existing) {
         if (!existing.password && user.password) existing.password = user.password;
         if (existing.mustChangePassword == null && user.mustChangePassword != null) existing.mustChangePassword = Boolean(user.mustChangePassword);
@@ -121,7 +129,7 @@
       user.mustChangePassword = user.mustChangePassword == null ? true : Boolean(user.mustChangePassword);
       user.lastLogin = user.lastLogin || null;
       migrated.push(user);
-      byUsername[username] = user;
+      byUsername[usernameKey] = user;
       byId[id] = user;
     });
     return migrated;
@@ -166,7 +174,7 @@
     var name = String(input.name || '').trim();
     var username = normalizeLoginUsername(input.username || buildUsernameFromName(name));
     if (!name || !username || !input.role || !String(input.jobTitle || '').trim() || !String(input.area || '').trim() || !input.status) return 'Preencha todos os campos obrigatórios.';
-    if (users.some(function (user) { return user.username === username && user.id !== editingId; })) return 'Já existe um usuário com este Usuário/Login.';
+    if (users.some(function (user) { return normalizeUsuario(user.username) === normalizeUsuario(username) && user.id !== editingId; })) return 'Já existe um usuário com este Usuário/Login.';
     return '';
   }
 
@@ -258,38 +266,46 @@
 
   function syncImportedOperator(input) {
     var users = getAll();
-    var username = normalizeLoginUsername(String(input.username || input.name || '').trim() || buildUsernameFromName(input.name));
-    var existing = users.find(function (user) { return user.username === username; });
+    var username = normalizeUsuario(input.username);
+    if (!username) return { error: 'Usuario é obrigatório.' };
+    var existing = users.find(function (user) { return normalizeUsuario(user.username) === username; });
     var coordinator = users.find(function (user) { return user.name.toLowerCase() === String(input.coordinatorName || '').toLowerCase() || user.id === String(input.coordinatorId || ''); });
+    var role = normalizeRole(input.role);
     if (existing) {
+      existing.username = username;
       existing.name = String(input.name || existing.name).trim();
       existing.jobTitle = String(input.jobTitle || existing.jobTitle || '').trim();
       existing.area = String(input.area || existing.area).trim();
       existing.shift = String(input.shift || existing.shift || '').trim();
       existing.coordinatorId = coordinator ? coordinator.id : existing.coordinatorId;
       existing.active = input.active !== false;
+      existing.role = role;
+      saveAll(users);
+      return existing;
     } else {
-      users.push({
+      var user = {
         id: 'u-' + Date.now() + '-' + users.length,
-        username: makeUniqueUsername(username),
+        username: username,
         name: String(input.name || '').trim(),
-        role: 'operator',
+        role: role,
         jobTitle: String(input.jobTitle || '').trim(),
         area: String(input.area || '').trim(),
         shift: String(input.shift || '').trim(),
-        coordinatorId: coordinator ? coordinator.id : '',
+        coordinatorId: role === 'coordinator' ? '' : coordinator ? coordinator.id : '',
         active: input.active !== false,
         mustChangePassword: true,
         password: DEFAULT_TEMP_PASSWORD,
         lastLogin: null
-      });
+      };
+      users.push(user);
+      saveAll(users);
+      return user;
     }
-    saveAll(users);
-    return existing || users[users.length - 1];
   }
 
   window.USER_SERVICE = {
     DEFAULT_TEMP_PASSWORD: DEFAULT_TEMP_PASSWORD,
+    normalizeUsuario: normalizeUsuario,
     normalizeUsername: normalizeUsername,
     normalizeLoginUsername: normalizeLoginUsername,
     buildUsernameFromName: buildUsernameFromName,

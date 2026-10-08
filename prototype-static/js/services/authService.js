@@ -7,7 +7,8 @@
   function passwordIsValid(password) { var rules = validatePassword(password); return rules.length && rules.upper && rules.lower && rules.number; }
   function login(username, password) {
     var usernameValue = normalizeUsername(username);
-    var user = window.USER_SERVICE.getAll().find(function (item) { return item.username === usernameValue; });
+    var usuario = window.USER_SERVICE.normalizeUsuario(usernameValue);
+    var user = window.USER_SERVICE.getAll().find(function (item) { return window.USER_SERVICE.normalizeUsuario(item.username) === usuario; });
     if (!user) { console.warn('[AUTH] Usuário não encontrado:', usernameValue); return { error: 'Usuário ou senha inválidos.' }; }
     if (!user.active) { console.warn('[AUTH] Usuário inativo:', usernameValue); return { error: 'Usuário inativo. Procure sua coordenação.' }; }
     if (user.password !== password) { console.warn('[AUTH] Senha incorreta para:', usernameValue); return { error: 'Usuário ou senha inválidos.' }; }

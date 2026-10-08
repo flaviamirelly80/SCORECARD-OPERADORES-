@@ -29,11 +29,16 @@
   }
 
   function clean(value) { return String(value == null ? '' : value).trim(); }
+  function normalizeUsuario(value) {
+    if (window.USER_SERVICE && window.USER_SERVICE.normalizeUsuario) return window.USER_SERVICE.normalizeUsuario(value);
+    if (value == null) return '';
+    var usuario = String(value).trim();
+    if (/^\d+\.0+$/.test(usuario)) usuario = usuario.replace(/\.0+$/, '');
+    return usuario.toUpperCase();
+  }
   function key(value) { return clean(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase(); }
   function canonicalHeader(value) { return key(value).replace(/[^a-z0-9]/g, ''); }
   function normalizeRows(rows) { return rows.filter(function (row) { return row.some(function (cell) { return clean(cell) !== ''; }); }); }
-  function normalizeUsername(value) { return String(value || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, '.').replace(/[^a-z0-9.]/g, ''); }
-
   function csvRows(text) {
     var rows = [], row = [], cell = '', quoted = false;
     for (var i = 0; i < text.length; i += 1) {
@@ -119,21 +124,35 @@
   }
 
   function validate(workbook, operators) {
-    var errors = [], valid = [], counts = { total: 0, valid: 0, errors: 0, newRecords: 0, updates: 0, duplicates: 0 }, operatorNames = {};
-    (operators || []).forEach(function (item) { if (item.username) operatorNames[normalizeUsername(item.username)] = true; });
+    var errors = [], valid = [], counts = { total: 0, valid: 0, errors: 0, newRecords: 0, updates: 0, duplicates: 0 }, availableUsers = Object.create(null);
+    (operators || []).forEach(function (item) {
+      var usuario = normalizeUsuario(item && (item.username || item.usuario));
+      if (usuario) availableUsers[usuario] = true;
+    });
+    var parsedSheets = {};
     Object.keys(SHEETS).forEach(function (sheetName) {
       var rows = workbook[sheetName];
       if (!rows) return;
       if (!rows.length) return;
       var headers = rows[0].map(canonicalHeader), expected = SHEETS[sheetName].map(canonicalHeader);
       expected.forEach(function (header) { if (!headers.includes(header)) errors.push({ sheet: sheetName, line: 1, message: 'Coluna obrigatória ausente: ' + header }); });
-      rows.slice(1).forEach(function (cells, index) {
-        var line = index + 2, row = {}; headers.forEach(function (header, position) { row[header] = clean(cells[position]); }); counts.total += 1;
-        if (!row.usuario && !row.username) errors.push({ sheet: sheetName, line: line, message: 'Usuário não informado.' });
-        else if (sheetName !== 'OPERADORES' && Object.keys(operatorNames).length) {
-          var normalizedUser = normalizeUsername(row.usuario || row.username || '');
-          if (!normalizedUser || !operatorNames[normalizedUser]) errors.push({ sheet: sheetName, line: line, message: 'Usuário não encontrado: ' + (row.usuario || row.username) + '.' });
-        }
+      parsedSheets[sheetName] = rows.slice(1).map(function (cells, index) {
+        var line = index + 2, row = {};
+        headers.forEach(function (header, position) { row[header] = clean(cells[position]); });
+        row.usuario = normalizeUsuario(row.usuario || row.username);
+        counts.total += 1;
+        return { row: row, line: line };
+      });
+    });
+    (parsedSheets.OPERADORES || []).forEach(function (item) {
+      if (item.row.usuario && item.row.nome) availableUsers[item.row.usuario] = true;
+    });
+    Object.keys(SHEETS).forEach(function (sheetName) {
+      (parsedSheets[sheetName] || []).forEach(function (entry) {
+        var line = entry.line, row = entry.row;
+        if (!row.usuario) errors.push({ sheet: sheetName, line: line, message: 'Usuario não informado.' });
+        else if (sheetName !== 'OPERADORES' && !availableUsers[row.usuario]) errors.push({ sheet: sheetName, line: line, message: 'Usuário não encontrado: ' + row.usuario + '.' });
+        if (sheetName === 'OPERADORES' && !row.nome) errors.push({ sheet: sheetName, line: line, message: 'Nome não informado para o operador.' });
         if (sheetName === 'JORNADA' && !STATUS.includes(row.status)) errors.push({ sheet: sheetName, line: line, message: 'Status "' + row.status + '" não é válido.' });
         if (sheetName === 'ETIQUETAS') {
           var category = normalizeLabelCategory(row.categoria || row.categoriatabelas || row.category || '');
@@ -156,22 +175,37 @@
   function validDate(value) { if (!value) return false; if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(value)) return true; return !Number.isNaN(Date.parse(value)); }
   function identity(item) {
     var row = item.row, sheet = item.sheet;
-    if (sheet === 'OPERADORES') return 'OPERADORES|' + normalizeUsername(row.usuario || row.username || row.nome || '');
-    if (sheet === 'JORNADA') return sheet + '|' + normalizeUsername(row.usuario || row.username || '') + '|' + row.data + '|' + row.status;
-    if (sheet === 'ETIQUETAS') return sheet + '|' + normalizeUsername(row.usuario || row.username || '') + '|' + row.data + '|' + row.numeroetiqueta;
-    if (sheet === 'BOS') return sheet + '|' + normalizeUsername(row.usuario || row.username || '') + '|' + row.data + '|' + row.numerobos;
-    if (sheet === 'BOSQ') return sheet + '|' + normalizeUsername(row.usuario || row.username || '') + '|' + row.data + '|' + row.numerobosq;
-    if (sheet === 'IDEIAS') return sheet + '|' + normalizeUsername(row.usuario || row.username || '') + '|' + row.data + '|' + row.titulo;
-    return sheet + '|' + normalizeUsername(row.usuario || row.username || '') + '|' + row.ano + '|' + row.mes + '|' + row.indicador;
+    if (sheet === 'OPERADORES') return 'OPERADORES|' + normalizeUsuario(row.usuario || row.username);
+    if (sheet === 'JORNADA') return sheet + '|' + normalizeUsuario(row.usuario || row.username) + '|' + row.data + '|' + row.status;
+    if (sheet === 'ETIQUETAS') return sheet + '|' + normalizeUsuario(row.usuario || row.username) + '|' + row.data + '|' + row.numeroetiqueta;
+    if (sheet === 'BOS') return sheet + '|' + normalizeUsuario(row.usuario || row.username) + '|' + row.data + '|' + row.numerobos;
+    if (sheet === 'BOSQ') return sheet + '|' + normalizeUsuario(row.usuario || row.username) + '|' + row.data + '|' + row.numerobosq;
+    if (sheet === 'IDEIAS') return sheet + '|' + normalizeUsuario(row.usuario || row.username) + '|' + row.data + '|' + row.titulo;
+    return sheet + '|' + normalizeUsuario(row.usuario || row.username) + '|' + row.ano + '|' + row.mes + '|' + row.indicador;
   }
 
-  function preview(workbook, operators, existingKeys) { var result = validate(workbook, operators), seen = {}; result.valid.forEach(function (item) { var id = identity(item); if (seen[id] || (existingKeys && existingKeys[id])) { result.counts.updates += 1; result.counts.duplicates += seen[id] ? 1 : 0; } else result.counts.newRecords += 1; seen[id] = true; }); return result; }
+  function preview(workbook, operators, existingKeys) {
+    var result = validate(workbook, operators), seen = {}, existingOperators = Object.create(null);
+    (operators || []).forEach(function (item) {
+      var usuario = normalizeUsuario(item && (item.username || item.usuario));
+      if (usuario) existingOperators[usuario] = true;
+    });
+    result.valid.forEach(function (item) {
+      var id = identity(item), isExistingOperator = item.sheet === 'OPERADORES' && existingOperators[normalizeUsuario(item.row.usuario)];
+      if (seen[id] || isExistingOperator || (existingKeys && existingKeys[id])) {
+        result.counts.updates += 1;
+        result.counts.duplicates += seen[id] ? 1 : 0;
+      } else result.counts.newRecords += 1;
+      seen[id] = true;
+    });
+    return result;
+  }
   function load() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null'); } catch (error) { return null; } }
   function save(snapshot) { localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot)); }
 
   function commit(result, target) {
     var snapshot = load() || { records: {} }, added = 0, updated = 0;
-    result.valid.forEach(function (item) { var id = identity(item), wasExisting = Boolean(snapshot.records[id]); snapshot.records[id] = item; if (wasExisting) updated += 1; else added += 1; });
+    result.valid.slice().sort(function (left, right) { return (left.sheet === 'OPERADORES' ? 0 : 1) - (right.sheet === 'OPERADORES' ? 0 : 1); }).forEach(function (item) { var id = identity(item), wasExisting = Boolean(snapshot.records[id]); snapshot.records[id] = item; if (wasExisting) updated += 1; else added += 1; });
     save(snapshot);
     return { added: added, updated: updated, ignored: result.errors.length, errors: result.errors.length, importedAt: new Date().toLocaleString('pt-BR'), snapshot: snapshot };
   }
@@ -179,13 +213,11 @@
   function applyToData(report, target) {
     var imported = Object.keys(report.snapshot.records).map(function (id) { return report.snapshot.records[id]; });
     var importedOperators = imported.filter(function (item) { return item.sheet === 'OPERADORES'; });
-    importedOperators.forEach(function (item, index) {
+    importedOperators.forEach(function (item) {
       var row = item.row;
-      var username = normalizeUsername(row.usuario || row.username || row.nome || '');
-      var operator = target.operators.find(function (current) {
-        return normalizeUsername(current.username || current.name || '') === username || normalizeUsername(current.name || '') === normalizeUsername(row.nome || '');
-      });
-      var normalized = { id: operator ? operator.id : 'op-' + (target.operators.length + index + 1), username: username, name: row.nome, initials: clean(row.nome).split(' ').slice(0, 2).map(function (part) { return part[0]; }).join('').toUpperCase(), area: row.area, function: row.funcao, shift: row.turno, status: row.status || (operator ? operator.status : 'Ativo'), coordinator: row.coordenador || 'Michelle Faria' };
+      var username = normalizeUsuario(row.usuario || row.username);
+      var operator = target.operators.find(function (current) { return normalizeUsuario(current.username) === username; });
+      var normalized = { id: item.userId || (operator && operator.id) || 'op-' + (target.operators.length + 1), username: username, name: row.nome, initials: clean(row.nome).split(' ').slice(0, 2).map(function (part) { return part[0]; }).join('').toUpperCase(), area: row.area, function: row.funcao, role: row.perfil, shift: row.turno, status: row.status || (operator ? operator.status : 'Ativo'), coordinator: row.coordenador || 'Michelle Faria' };
       if (operator) Object.assign(operator, normalized); else target.operators.push(normalized);
     });
     ['ETIQUETAS', 'BOS', 'BOSQ', 'IDEIAS'].forEach(function (sheet) {
@@ -194,7 +226,7 @@
       if (metric && records.length) { metric.value = String(records.length); metric.values[metric.values.length - 1] = Math.min(100, records.length); }
     });
     var importedJourney = imported.filter(function (item) { return item.sheet === 'JORNADA'; });
-    if (importedJourney.length) target.journey = importedJourney.map(function (item) { return { date: item.row.data, day: '', status: item.row.status, hours: item.row.horas, note: item.row.observacao }; });
+    if (importedJourney.length) target.journey = importedJourney.map(function (item) { return { userId: item.userId || '', usuario: normalizeUsuario(item.row.usuario), date: item.row.data, day: '', status: item.row.status, hours: item.row.horas, note: item.row.observacao }; });
     target.importedRecords = Object.keys(report.snapshot.records).length;
   }
 
@@ -208,10 +240,10 @@
   function downloadTemplate() { exportExcel('modelo-importacao-scorecard', templateRows()); }
   function exportSheet(sheetName) {
     var snapshot = load() || { records: {} }, headers = SHEETS[sheetName] || [], records = Object.keys(snapshot.records).map(function (id) { return snapshot.records[id]; }).filter(function (item) { return item.sheet === sheetName; });
-    var rows = '<table><tr>' + headers.map(function (header) { return '<th>' + header + '</th>'; }).join('') + '</tr>' + records.map(function (item) { return '<tr>' + headers.map(function (header) { var field = canonicalHeader(header); return '<td>' + clean(item.row[field]) + '</td>'; }).join('') + '</tr>'; }).join('') + '</table>';
+    var rows = '<table><tr>' + headers.map(function (header) { return '<th>' + header + '</th>'; }).join('') + '</tr>' + records.map(function (item) { return '<tr>' + headers.map(function (header) { var field = canonicalHeader(header), value = item.row[field]; return '<td>' + (field === 'usuario' ? normalizeUsuario(value) : clean(value)) + '</td>'; }).join('') + '</tr>'; }).join('') + '</table>';
     exportExcel('exportacao-' + sheetName.toLowerCase(), '<h1>' + sheetName + '</h1>' + rows);
   }
-  function exportAll() { var rows = '<h2>OPERADORES</h2><table><tr><th>Usuario</th><th>Nome</th><th>Área</th><th>Turno</th><th>Perfil</th></tr>' + PROTOTYPE_DATA.operators.map(function (item) { return '<tr><td>' + (item.username || '') + '</td><td>' + item.name + '</td><td>' + item.area + '</td><td>' + (item.shift || '') + '</td><td>' + (item.function || item.jobTitle || 'Operador de Processos') + '</td></tr>'; }).join('') + '</table>'; exportExcel('exportacao-scorecard', rows); }
+  function exportAll() { var rows = '<h2>OPERADORES</h2><table><tr><th>Usuario</th><th>Nome</th><th>Área</th><th>Turno</th><th>Perfil</th></tr>' + PROTOTYPE_DATA.operators.map(function (item) { return '<tr><td>' + normalizeUsuario(item.username) + '</td><td>' + item.name + '</td><td>' + item.area + '</td><td>' + (item.shift || '') + '</td><td>' + (item.function || item.jobTitle || 'Operador de Processos') + '</td></tr>'; }).join('') + '</table>'; exportExcel('exportacao-scorecard', rows); }
 
-  window.EXCEL_IMPORT = { SHEETS: SHEETS, STATUS: STATUS, parseFile: parseFile, validate: validate, preview: preview, commit: commit, applyToData: applyToData, hydrate: hydrate, load: load, downloadTemplate: downloadTemplate, exportAll: exportAll, exportSheet: exportSheet };
+  window.EXCEL_IMPORT = { SHEETS: SHEETS, STATUS: STATUS, normalizeUsuario: normalizeUsuario, parseFile: parseFile, validate: validate, preview: preview, commit: commit, applyToData: applyToData, hydrate: hydrate, load: load, downloadTemplate: downloadTemplate, exportAll: exportAll, exportSheet: exportSheet };
 }());

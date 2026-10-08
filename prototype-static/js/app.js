@@ -364,7 +364,8 @@
     status.textContent = 'Lendo abas e validando registros...';
     try {
       var workbook = await window.EXCEL_IMPORT.parseFile(file);
-      state.importPreview = { file: file.name, workbook: workbook, result: window.EXCEL_IMPORT.preview(workbook, data.operators, {}) };
+      var existingSnapshot = window.EXCEL_IMPORT.load();
+      state.importPreview = { file: file.name, workbook: workbook, result: window.EXCEL_IMPORT.preview(workbook, window.USER_SERVICE.getAll(), existingSnapshot && existingSnapshot.records) };
       renderShell();
     } catch (error) {
       status.textContent = error.message || 'Não foi possível ler o arquivo.';
@@ -374,11 +375,41 @@
 
   function confirmExcelImport() {
     if (!state.importPreview) return;
-    var report = window.EXCEL_IMPORT.commit(state.importPreview.result, data);
-    window.EXCEL_IMPORT.applyToData(report, data);
-    state.importPreview.result.valid.filter(function (item) { return item.sheet === 'OPERADORES'; }).forEach(function (item) { window.USER_SERVICE.syncImportedOperator({ username: item.row.usuario, name: item.row.nome, jobTitle: item.row.funcao, area: item.row.area, shift: item.row.turno, coordinatorName: item.row.coordenador, active: String(item.row.status || '').toUpperCase() !== 'INATIVO' }); });
-    state.importPreview.report = report;
-    state.importPreview.confirmed = true;
+    try {
+      var result = state.importPreview.result;
+      var importedOperators = result.valid.filter(function (item) { return item.sheet === 'OPERADORES'; });
+      var userIds = {};
+      importedOperators.forEach(function (item) {
+        var row = item.row;
+        var status = String(row.status || '').trim().toUpperCase();
+        var user = window.USER_SERVICE.syncImportedOperator({
+          username: window.EXCEL_IMPORT.normalizeUsuario(row.usuario),
+          name: row.nome,
+          role: row.perfil,
+          jobTitle: row.funcao,
+          area: row.area,
+          shift: row.turno,
+          coordinatorName: row.coordenador,
+          active: status !== 'INATIVO' && status !== 'INACTIVE' && status !== '0' && status !== 'FALSE'
+        });
+        if (user.error) throw new Error(user.error);
+        userIds[window.EXCEL_IMPORT.normalizeUsuario(row.usuario)] = user.id;
+        item.userId = user.id;
+      });
+      var availableUsers = window.USER_SERVICE.getAll();
+      result.valid.filter(function (item) { return item.sheet !== 'OPERADORES'; }).forEach(function (item) {
+        var usuario = window.EXCEL_IMPORT.normalizeUsuario(item.row.usuario);
+        var existingUser = availableUsers.find(function (user) { return window.EXCEL_IMPORT.normalizeUsuario(user.username) === usuario; });
+        item.userId = userIds[usuario] || (existingUser && existingUser.id);
+        if (!item.userId) throw new Error('Não foi possível associar Usuario ' + usuario + ' ao ID interno do usuário.');
+      });
+      var report = window.EXCEL_IMPORT.commit(result, data);
+      window.EXCEL_IMPORT.applyToData(report, data);
+      state.importPreview.report = report;
+      state.importPreview.confirmed = true;
+    } catch (error) {
+      state.importPreview.importError = error instanceof Error ? error.message : 'Não foi possível confirmar a importação.';
+    }
     renderShell();
   }
 
@@ -388,8 +419,9 @@
     var report = preview && preview.report;
     var summary = result ? '<div class="import-summary"><div><span>Registros encontrados</span><strong>' + result.counts.total + '</strong></div><div class="valid"><span>Registros válidos</span><strong>' + result.counts.valid + '</strong></div><div class="new"><span>Novos registros</span><strong>' + result.counts.newRecords + '</strong></div><div class="updated"><span>Serão atualizados</span><strong>' + result.counts.updates + '</strong></div><div class="invalid"><span>Registros com erro</span><strong>' + result.counts.errors + '</strong></div><div class="invalid"><span>Possíveis duplicidades</span><strong>' + result.counts.duplicates + '</strong></div></div>' : '';
     var errors = result && result.errors.length ? '<div class="import-errors"><h4>Erros encontrados</h4>' + result.errors.slice(0, 12).map(function (error) { return '<p><strong>' + error.sheet + ', linha ' + error.line + ':</strong> ' + error.message + '</p>'; }).join('') + (result.errors.length > 12 ? '<p>+' + (result.errors.length - 12) + ' erros adicionais.</p>' : '') + '</div>' : '';
+    if (preview && preview.importError) errors += '<div class="import-errors"><p>' + escapeHtml(preview.importError) + '</p></div>';
     var finished = report ? '<div class="import-success"><strong>IMPORTAÇÃO CONCLUÍDA</strong><span>Registros adicionados: ' + report.added + '</span><span>Registros atualizados: ' + report.updated + '</span><span>Registros ignorados: ' + report.ignored + '</span><span>Registros com erro: ' + report.errors + '</span><small>Atualizado em ' + report.importedAt + '. Persistência temporária local.</small></div>' : '';
-    return '<section class="page-intro"><p class="overline red">Gestão de dados</p><h2>Importar dados</h2><p class="muted">Atualize o portal a partir de um único arquivo Excel com as abas padronizadas.</p></section><div class="notice-banner"><span class="notice-icon">i</span><div><strong>Excel → Site</strong><p>Esta é uma importação demonstrativa. Os dados ficam somente neste navegador, em localStorage, até a integração futura com a API e o banco de dados.</p></div></div><section class="import-panel"><div class="import-panel-heading"><div><p class="overline">Etapa 1</p><h3>Selecione o arquivo Excel</h3><p class="muted">Use .xlsx, .xls ou .csv. O arquivo pode conter as abas OPERADORES, JORNADA, ETIQUETAS, BOS, BOSQ, IDEIAS e METAS.</p></div><div class="import-tools"><button class="outline-button" id="download-template">' + icon('download') + ' Baixar modelo de Excel</button><button class="outline-button" id="export-excel">' + icon('download') + ' Exportar dados atuais</button></div></div><label class="file-drop" for="excel-file"><span class="upload-circle">' + icon('upload') + '</span><strong>Escolha um arquivo para importar</strong><small>Depois da leitura você verá a prévia antes de confirmar.</small><input id="excel-file" type="file" accept=".xlsx,.xls,.csv"></label><p id="import-status" class="import-status"></p></section>' + (summary ? '<section class="import-panel preview-panel"><div class="table-heading"><div><p class="overline">Etapas 2 a 7</p><h3>Prévia da importação</h3></div><strong class="file-name">' + escapeHtml(preview.file) + '</strong></div>' + summary + errors + (report ? finished : '<div class="import-actions"><button class="outline-button" id="cancel-import">Cancelar</button><button class="primary-button" id="confirm-import">Confirmar importação ' + icon('arrow') + '</button></div>') + '</section>' : '') + '<section class="import-panel schema-panel"><div><p class="overline">Estrutura esperada</p><h3>Abas e identificadores</h3><p class="muted">A matrícula é a chave principal. Registros repetidos usam a combinação de identificação de cada aba para atualizar, não duplicar.</p></div><div class="schema-list">' + Object.keys(window.EXCEL_IMPORT.SHEETS).map(function (sheet) { return '<span><strong>' + sheet + '</strong>' + window.EXCEL_IMPORT.SHEETS[sheet].join(' · ') + '</span>'; }).join('') + '</div></section>';
+    return '<section class="page-intro"><p class="overline red">Gestão de dados</p><h2>Importar dados</h2><p class="muted">Atualize o portal a partir de um único arquivo Excel com as abas padronizadas.</p></section><div class="notice-banner"><span class="notice-icon">i</span><div><strong>Excel → Site</strong><p>Esta é uma importação demonstrativa. Os dados ficam somente neste navegador, em localStorage, até a integração futura com a API e o banco de dados.</p></div></div><section class="import-panel"><div class="import-panel-heading"><div><p class="overline">Etapa 1</p><h3>Selecione o arquivo Excel</h3><p class="muted">Use .xlsx, .xls ou .csv. O arquivo pode conter as abas OPERADORES, JORNADA, ETIQUETAS, BOS, BOSQ, IDEIAS e METAS.</p></div><div class="import-tools"><button class="outline-button" id="download-template">' + icon('download') + ' Baixar modelo de Excel</button><button class="outline-button" id="export-excel">' + icon('download') + ' Exportar dados atuais</button></div></div><label class="file-drop" for="excel-file"><span class="upload-circle">' + icon('upload') + '</span><strong>Escolha um arquivo para importar</strong><small>Depois da leitura você verá a prévia antes de confirmar.</small><input id="excel-file" type="file" accept=".xlsx,.xls,.csv"></label><p id="import-status" class="import-status"></p></section>' + (summary ? '<section class="import-panel preview-panel"><div class="table-heading"><div><p class="overline">Etapas 2 a 7</p><h3>Prévia da importação</h3></div><strong class="file-name">' + escapeHtml(preview.file) + '</strong></div>' + summary + errors + (report ? finished : '<div class="import-actions"><button class="outline-button" id="cancel-import">Cancelar</button><button class="primary-button" id="confirm-import">Confirmar importação ' + icon('arrow') + '</button></div>') + '</section>' : '') + '<section class="import-panel schema-panel"><div><p class="overline">Estrutura esperada</p><h3>Abas e identificadores</h3><p class="muted">O campo Usuario é a chave principal para identificar cada colaborador. Os registros das demais abas são associados ao colaborador através desse identificador. Registros repetidos usam a combinação de identificação de cada aba para atualizar, não duplicar.</p></div><div class="schema-list">' + Object.keys(window.EXCEL_IMPORT.SHEETS).map(function (sheet) { return '<span><strong>' + sheet + '</strong>' + window.EXCEL_IMPORT.SHEETS[sheet].join(' · ') + '</span>'; }).join('') + '</div></section>';
   }
 
   function exportPage() {
@@ -404,7 +436,7 @@
     var users = allUsers.filter(function (user) {
       var query = state.usersQuery.toLowerCase();
       var coordinator = coordinators.find(function (item) { return item.id === user.coordinatorId; });
-      return (!query || (user.name + ' ' + user.username).toLowerCase().includes(query)) &&
+      return (!query || (user.name + ' ' + user.username).toLowerCase().includes(query) || window.USER_SERVICE.normalizeUsuario(user.username).includes(window.USER_SERVICE.normalizeUsuario(query))) &&
         (state.userRoleFilter === 'Todos' || user.role === state.userRoleFilter) &&
         (state.userStatusFilter === 'Todos' || (user.active ? 'active' : 'inactive') === state.userStatusFilter) &&
         (state.userAreaFilter === 'Todas' || user.area === state.userAreaFilter) &&
