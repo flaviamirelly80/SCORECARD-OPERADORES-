@@ -159,7 +159,7 @@
   function bindPageActions() {
     document.querySelectorAll('[data-select-operator]').forEach(function (button) {
       button.addEventListener('click', function () {
-        var operator = data.operators.find(function (item) { return String(item.id) === String(button.dataset.selectOperator); });
+        var operator = portalData.getOperators().find(function (item) { return String(item.id) === String(button.dataset.selectOperator); });
         if (operator) { state.selectedOperator = operator; state.view = 'overview'; renderShell(); }
       });
     });
@@ -302,8 +302,9 @@
   }
 
   function operatorForId(operatorId) {
-    return portalData.getOperators().find(function (operator) { return operator.id === operatorId; }) ||
-      data.operators.find(function (operator) { return operator.id === operatorId; });
+    var operator = portalData.getOperators().find(function (item) { return String(item.id) === String(operatorId); });
+    if (operator || portalData.hasImportedData()) return operator || null;
+    return data.operators.find(function (item) { return String(item.id) === String(operatorId); }) || null;
   }
 
   function goalConfig() {
@@ -432,9 +433,15 @@
   }
 
   function teamContextCard(operators) {
-    var counts = { 'CAFÉ CRU': 0, MOAGEM: 0, TORRADOR: 0 };
-    operators.forEach(function (operator) { if (counts[operator.area] != null) counts[operator.area] += 1; });
-    return '<div class="person-strip"><div class="avatar large">EQ</div><div><strong>Equipe de processos</strong><span>' + operators.length + ' operador' + (operators.length === 1 ? '' : 'es') + ' analisado' + (operators.length === 1 ? '' : 's') + '</span></div><div class="person-meta"><span>Áreas</span><strong>Café Cru: ' + counts['CAFÉ CRU'] + ' · Moagem: ' + counts.MOAGEM + ' · Torrador: ' + counts.TORRADOR + '</strong><small>Coordenadora: ' + escapeHtml(state.user.name) + '</small></div></div>';
+    var counts = Object.create(null);
+    operators.forEach(function (operator) {
+      var area = String(operator.area || '').trim();
+      if (area) counts[area] = (counts[area] || 0) + 1;
+    });
+    var areaSummary = Object.keys(counts).sort().map(function (area) {
+      return escapeHtml(area) + ': ' + counts[area];
+    }).join(' · ');
+    return '<div class="person-strip"><div class="avatar large">EQ</div><div><strong>Equipe de processos</strong><span>' + operators.length + ' operador' + (operators.length === 1 ? '' : 'es') + ' analisado' + (operators.length === 1 ? '' : 's') + '</span></div><div class="person-meta"><span>Áreas</span><strong>' + (areaSummary || 'Nenhuma área cadastrada') + '</strong><small>Coordenadora: ' + escapeHtml(state.user.name) + '</small></div></div>';
   }
 
   function coordinatorFilters() {
@@ -778,7 +785,7 @@
     var month = state.month || 'Abril';
     var baseFilters = '<section class="page-intro"><p class="overline red">Acompanhamento da área</p><h2>Metas da área</h2><p class="muted">Visão simples do cumprimento das metas mensais por colaborador, sem expor dados pessoais ou sensíveis.</p></section><div class="filters"><label>Área / Processo<select id="area-filter"><option value="Todas">Todas as áreas</option><option value="CAFÉ CRU">CAFÉ CRU</option><option value="MOAGEM">MOAGEM</option><option value="TORRADOR">TORRADOR</option></select></label><label>Mês<select id="month-filter">' + monthOptions(true) + '</select></label><label>Ano<select id="year-filter">' + yearOptions() + '</select></label><label>Operadores<select id="metric-operator-filter"><option value="Todos">Todos os operadores</option>' + rows.map(function (operator) { return '<option value="' + operator.id + '">' + escapeHtml(operator.name) + '</option>'; }).join('') + '</select></label></div>';
     if (!rows.length) {
-      return baseFilters + '<div class="notice-banner"><span class="notice-icon">i</span><div><strong>Nenhum dado disponível</strong><p>Nenhum operador foi encontrado para o período selecionado. Ajuste os filtros e tente novamente.</p></div></div>';
+      return baseFilters + '<div class="notice-banner"><span class="notice-icon">i</span><div><strong>Nenhum dado disponível para o período selecionado.</strong><p>Nenhum operador foi encontrado para o período selecionado. Ajuste os filtros e tente novamente.</p></div></div>';
     }
     var teamGoalRows = rows.map(function (operator) {
       var summary = getMonthlyGoalSummary(operator.id);
@@ -790,8 +797,7 @@
     var metrics = ['BOS', 'BOSQ', 'SHE_ABERTAS', 'SHE_FECHADAS', 'IDEIAS_ABERTAS'];
     var topStats = '<div class="summary-grid"><div><span>Operadores</span><strong>' + teamGoalRows.length + '</strong><small>' + month + ' / ' + year + '</small></div><div><span>Operadores OK</span><strong>' + okCount + '</strong><small>Meta atendida</small></div><div><span>Operadores NÃO OK</span><strong>' + notOkCount + '</strong><small>Com pendência</small></div><div><span>% da equipe</span><strong>' + allGoalRate + '%</strong><small>meta atendida</small></div></div>';
     var metricBreakdown = '<div class="detail-grid">' + metrics.map(function (key) {
-      var count = teamGoalRows.filter(function (row) { return row.summary[key].status === 'OK'; }).length;
-      return '<div class="detail-card"><span>' + key.replace('_', ' ').replace('SHE', 'SHE ').replace('IDEIAS', 'Ideias') + '</span><strong>' + count + '/' + teamGoalRows.length + '</strong><small>' + (count === teamGoalRows.length ? 'Todos atendidos' : 'Meta por operador') + '</small></div>';
+      return '<div class="detail-card"><span>' + key.replace('_', ' ').replace('SHE', 'SHE ').replace('IDEIAS', 'Ideias') + '</span><strong>' + goalConfig().monthly[key] + '/mês</strong><small>Meta por operador</small></div>';
     }).join('') + '</div>';
     return baseFilters + topStats + metricBreakdown + '<section class="table-panel"><div class="table-heading"><div><p class="overline">Performance da equipe</p><h3>Consolidado</h3></div><span class="updated">Mostrar apenas metas obrigatórias.</span></div><div class="table-scroll"><table><thead><tr><th>Colaborador</th><th>BOS</th><th>BOSQ</th><th>SHE AB.</th><th>SHE FECH.</th><th>IDEIA</th><th>Geral</th></tr></thead><tbody>' + teamGoalRows.map(function (row) {
       return '<tr><td><strong>' + escapeHtml(row.operator.name) + '</strong><small>' + escapeHtml(row.operator.area) + '</small></td><td>' + formatGoalMetricCell('BOS', row.operator) + '</td><td>' + formatGoalMetricCell('BOSQ', row.operator) + '</td><td>' + formatGoalMetricCell('SHE_ABERTAS', row.operator) + '</td><td>' + formatGoalMetricCell('SHE_FECHADAS', row.operator) + '</td><td>' + formatGoalMetricCell('IDEIAS_ABERTAS', row.operator) + '</td><td><span class="status ' + (row.general === 'OK' ? 'positive' : 'warning') + '">' + row.general + '</span></td></tr>';
@@ -804,13 +810,16 @@
       var summary = getMonthlyGoalSummary(operator.id);
       return { operator: operator, summary: summary, general: summary.GERAL.status };
     });
+    if (!summaries.length) {
+      var emptyFilters = state.user.role === 'coordinator' ? coordinatorFilters() : '<div class="filters"><label>Mês<select id="month-filter">' + monthOptions(true) + '</select></label><label>Ano<select id="year-filter">' + yearOptions() + '</select></label></div>';
+      return '<section class="page-intro"><p class="overline red">Acompanhamento da área</p><h2>Metas da área</h2><p class="muted">Realizados calculados a partir dos registros importados no período selecionado.</p></section>' + emptyFilters + '<div class="notice-banner"><span class="notice-icon">i</span><div><strong>Nenhum dado disponível para o período selecionado.</strong><p>Não há registros para o filtro atual. Ajuste o período ou a área e tente novamente.</p></div></div>';
+    }
     var okCount = summaries.filter(function (row) { return row.general === 'OK'; }).length;
     var metrics = ['BOS', 'BOSQ', 'SHE_ABERTAS', 'SHE_FECHADAS', 'IDEIAS_ABERTAS'];
     var period = state.month === 'Todos os meses' ? state.year : state.month + ' / ' + state.year;
     var stats = '<div class="summary-grid"><div><span>Operadores</span><strong>' + summaries.length + '</strong><small>' + escapeHtml(period) + '</small></div><div><span>Operadores OK</span><strong>' + okCount + '</strong><small>Meta atendida</small></div><div><span>Operadores NÃO OK</span><strong>' + (summaries.length - okCount) + '</strong><small>Com pendência</small></div><div><span>% da equipe</span><strong>' + (summaries.length ? Math.round(okCount / summaries.length * 100) : 0) + '%</strong><small>meta atendida</small></div></div>';
     var breakdown = '<div class="detail-grid">' + metrics.map(function (key) {
-      var count = summaries.filter(function (row) { return row.summary[key].status === 'OK'; }).length;
-      return '<div class="detail-card"><span>' + key.replace('_', ' ') + '</span><strong>' + count + '/' + summaries.length + '</strong><small>Meta por operador</small></div>';
+      return '<div class="detail-card"><span>' + key.replace('_', ' ') + '</span><strong>' + goalConfig().monthly[key] + '/mês</strong><small>Meta por operador</small></div>';
     }).join('') + '</div>';
     var body = summaries.map(function (row) {
       return '<tr><td><strong>' + escapeHtml(row.operator.name) + '</strong><small>' + escapeHtml(row.operator.area) + '</small></td><td>' + formatGoalMetricCell('BOS', row.operator) + '</td><td>' + formatGoalMetricCell('BOSQ', row.operator) + '</td><td>' + formatGoalMetricCell('SHE_ABERTAS', row.operator) + '</td><td>' + formatGoalMetricCell('SHE_FECHADAS', row.operator) + '</td><td>' + formatGoalMetricCell('IDEIAS_ABERTAS', row.operator) + '</td><td><span class="status ' + (row.general === 'OK' ? 'positive' : 'warning') + '">' + row.general + '</span></td></tr>';
@@ -829,9 +838,8 @@
       return Object.assign({}, operator, { score: passing * 20, status: summary.GERAL.status });
     });
     var teamTotals = sourceOperators.filter(function (operator) { return operator.role === 'operator'; });
-    var areaCounts = { 'CAFÉ CRU': 0, MOAGEM: 0, TORRADOR: 0 };
-    teamTotals.forEach(function (operator) { if (areaCounts[operator.area] != null) areaCounts[operator.area] += 1; });
-    return '<section class="welcome-row"><div><p class="overline red">Gestão de performance</p><h2>Minha equipe</h2><p class="muted">Selecione um operador para visualizar seus indicadores individuais.</p></div><button class="primary-button compact" data-view="overview">Ver selecionado ' + icon('arrow') + '</button></section><div class="filters"><label>Pesquisar operador<input id="operator-search" type="search" placeholder="Nome do operador..."></label><label>Mês<select id="month-filter"><option>Abril</option><option>Março</option><option>Fevereiro</option></select></label><label>Ano<select id="year-filter"><option>2026</option><option>2025</option></select></label><label>Área<select id="area-filter"><option>Todas</option><option value="CAFÉ CRU">Café Cru (' + areaCounts['CAFÉ CRU'] + ')</option><option value="MOAGEM">Moagem (' + areaCounts.MOAGEM + ')</option><option value="TORRADOR">Torrador (' + areaCounts.TORRADOR + ')</option></select></label></div><section class="table-panel team-panel"><div class="table-heading"><div><p class="overline">' + rows.length + ' operadores</p><h3>Performance individual</h3></div><span class="updated">Total da equipe: ' + teamTotals.length + '</span></div><div class="table-scroll"><table><thead><tr><th>Operador</th><th>Área</th><th>Turno</th><th>Scorecard</th><th>Status</th><th></th></tr></thead><tbody>' + rows.map(function (operator) { return '<tr data-operator-row="' + escapeHtml(operator.name + ' ' + operator.area) + '"><td><div class="table-person"><span class="avatar small-avatar">' + operator.initials + '</span><strong>' + operator.name + '</strong></div></td><td>' + operator.area + '</td><td>' + operator.shift + '</td><td><div class="score-cell"><strong>' + operator.score + '%</strong><span><i style="width:' + operator.score + '%"></i></span></div></td><td><span class="status ' + (operator.score > 90 ? 'on-track' : operator.score > 80 ? 'neutral' : 'warning') + '">' + operator.status + '</span></td><td><button class="table-action" data-select-operator="' + operator.id + '" aria-label="Ver indicadores de ' + operator.name + '">' + icon('arrow') + '</button></td></tr>'; }).join('') + '</tbody></table></div></section>';
+    var areas = teamTotals.map(function (operator) { return operator.area; }).filter(function (area, index, all) { return area && all.indexOf(area) === index; }).sort();
+    return '<section class="welcome-row"><div><p class="overline red">Gestão de performance</p><h2>Minha equipe</h2><p class="muted">Selecione um operador para visualizar seus indicadores individuais.</p></div><button class="primary-button compact" data-view="overview">Ver selecionado ' + icon('arrow') + '</button></section><div class="filters"><label>Pesquisar operador<input id="operator-search" type="search" placeholder="Nome do operador..."></label><label>Mês<select id="month-filter"><option>Abril</option><option>Março</option><option>Fevereiro</option></select></label><label>Ano<select id="year-filter"><option>2026</option><option>2025</option></select></label><label>Área<select id="area-filter"><option value="Todas"' + (state.area === 'Todas' ? ' selected' : '') + '>Todas</option>' + areas.map(function (area) { return '<option value="' + escapeHtml(area) + '"' + (state.area === area ? ' selected' : '') + '>' + escapeHtml(area) + '</option>'; }).join('') + '</select></label></div><section class="table-panel team-panel"><div class="table-heading"><div><p class="overline">' + rows.length + ' operadores</p><h3>Performance individual</h3></div><span class="updated">Total da equipe: ' + teamTotals.length + '</span></div><div class="table-scroll"><table><thead><tr><th>Operador</th><th>Área</th><th>Turno</th><th>Scorecard</th><th>Status</th><th></th></tr></thead><tbody>' + rows.map(function (operator) { return '<tr data-operator-row="' + escapeHtml(operator.name + ' ' + operator.area) + '"><td><div class="table-person"><span class="avatar small-avatar">' + operator.initials + '</span><strong>' + operator.name + '</strong></div></td><td>' + operator.area + '</td><td>' + operator.shift + '</td><td><div class="score-cell"><strong>' + operator.score + '%</strong><span><i style="width:' + operator.score + '%"></i></span></div></td><td><span class="status ' + (operator.score > 90 ? 'on-track' : operator.score > 80 ? 'neutral' : 'warning') + '">' + operator.status + '</span></td><td><button class="table-action" data-select-operator="' + operator.id + '" aria-label="Ver indicadores de ' + operator.name + '">' + icon('arrow') + '</button></td></tr>'; }).join('') + '</tbody></table></div></section>';
   }
 
   function statusClass(status) {

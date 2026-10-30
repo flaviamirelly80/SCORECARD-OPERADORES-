@@ -71,7 +71,7 @@ input::placeholder { color: #b5a79e; }
 .demo-access { display: grid; gap: 6px; margin-top: 34px; border-left: 2px solid #e7bd77; padding: 13px 15px; color: var(--muted); background: #fbf6ef; font-size: 11px; }
 .demo-access strong { color: var(--coffee); font-size: 11px; }
 .app-shell { display: flex; min-height: 100vh; }
-.sidebar { position: fixed; z-index: 4; display: flex; flex-direction: column; width: 248px; height: 100vh; padding: 29px 17px 20px; color: var(--cream); background: var(--green-900); }
+.sidebar { position: fixed; z-index: 4; display: flex; flex-direction: column; width: 248px; height: 100vh; height: 100dvh; overflow-y: auto; overflow-x: hidden; padding: 29px 17px 20px; color: var(--cream); background: var(--green-900); }
 .sidebar-brand { display: flex; align-items: center; justify-content: center; gap: 12px; min-height: 112px; border-bottom: 1px solid rgba(255,255,255,.13); padding: 0 13px 22px; color: #fffaf4; }
 .sidebar-brand strong, .sidebar-brand span { display: block; font-family: Georgia, serif; font-size: 15px; }
 .sidebar-brand span { color: #e5b66e; font-size: 12px; }

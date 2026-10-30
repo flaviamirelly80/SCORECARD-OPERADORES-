@@ -29,6 +29,13 @@
   }
 
   function clean(value) { return String(value == null ? '' : value).trim(); }
+  function rowValue(row, header) {
+    var expected = canonicalHeader(header), keys = Object.keys(row || {});
+    for (var index = 0; index < keys.length; index += 1) {
+      if (canonicalHeader(keys[index]) === expected) return row[keys[index]];
+    }
+    return '';
+  }
   function normalizeUsuario(value) {
     if (window.USER_SERVICE && window.USER_SERVICE.normalizeUsuario) return window.USER_SERVICE.normalizeUsuario(value);
     if (value == null) return '';
@@ -247,10 +254,29 @@
   function downloadTemplate() { exportExcel('modelo-importacao-scorecard', templateRows()); }
   function exportSheet(sheetName) {
     var snapshot = load() || { records: {} }, headers = SHEETS[sheetName] || [], records = Object.keys(snapshot.records).map(function (id) { return snapshot.records[id]; }).filter(function (item) { return item.sheet === sheetName; });
-    var rows = '<table><tr>' + headers.map(function (header) { return '<th>' + header + '</th>'; }).join('') + '</tr>' + records.map(function (item) { return '<tr>' + headers.map(function (header) { var field = canonicalHeader(header), value = item.row[field]; return '<td>' + (field === 'usuario' ? normalizeUsuario(value) : clean(value)) + '</td>'; }).join('') + '</tr>'; }).join('') + '</table>';
+    var rows = '<table><tr>' + headers.map(function (header) { return '<th>' + header + '</th>'; }).join('') + '</tr>' + records.map(function (item) { return '<tr>' + headers.map(function (header) { var field = canonicalHeader(header), value = rowValue(item.row, header); return '<td>' + (field === 'usuario' ? normalizeUsuario(value) : clean(value)) + '</td>'; }).join('') + '</tr>'; }).join('') + '</table>';
     exportExcel('exportacao-' + sheetName.toLowerCase(), '<h1>' + sheetName + '</h1>' + rows);
   }
-  function exportAll() { var rows = '<h2>OPERADORES</h2><table><tr><th>Usuario</th><th>Nome</th><th>Área</th><th>Turno</th><th>Perfil</th></tr>' + PROTOTYPE_DATA.operators.map(function (item) { return '<tr><td>' + normalizeUsuario(item.username) + '</td><td>' + item.name + '</td><td>' + item.area + '</td><td>' + (item.shift || '') + '</td><td>' + (item.function || item.jobTitle || 'Operador de Processos') + '</td></tr>'; }).join('') + '</table>'; exportExcel('exportacao-scorecard', rows); }
+  function exportAll() {
+    var snapshot = load();
+    var imported = snapshot && snapshot.records ? Object.keys(snapshot.records).map(function (id) { return snapshot.records[id]; }) : [];
+    if (imported.length) {
+      var rows = Object.keys(SHEETS).map(function (sheetName) {
+        var headers = SHEETS[sheetName];
+        var records = imported.filter(function (item) { return item && item.sheet === sheetName; });
+        return '<h2>' + sheetName + '</h2><table><tr>' + headers.map(function (header) { return '<th>' + header + '</th>'; }).join('') + '</tr>' + records.map(function (item) {
+          return '<tr>' + headers.map(function (header) {
+            var field = canonicalHeader(header), value = rowValue(item.row, header);
+            return '<td>' + (field === 'usuario' ? normalizeUsuario(value) : clean(value)) + '</td>';
+          }).join('') + '</tr>';
+        }).join('') + '</table>';
+      }).join('');
+      exportExcel('exportacao-scorecard', rows);
+      return;
+    }
+    var demoRows = '<h2>OPERADORES</h2><table><tr><th>Usuario</th><th>Nome</th><th>Área</th><th>Turno</th><th>Perfil</th></tr>' + PROTOTYPE_DATA.operators.map(function (item) { return '<tr><td>' + normalizeUsuario(item.username) + '</td><td>' + item.name + '</td><td>' + item.area + '</td><td>' + (item.shift || '') + '</td><td>' + (item.function || item.jobTitle || 'Operador de Processos') + '</td></tr>'; }).join('') + '</table>';
+    exportExcel('exportacao-scorecard', demoRows);
+  }
 
   window.EXCEL_IMPORT = { SHEETS: SHEETS, STATUS: STATUS, normalizeUsuario: normalizeUsuario, parseFile: parseFile, validate: validate, preview: preview, commit: commit, applyToData: applyToData, hydrate: hydrate, load: load, downloadTemplate: downloadTemplate, exportAll: exportAll, exportSheet: exportSheet };
 }());

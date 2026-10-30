@@ -3,6 +3,7 @@
   'use strict';
 
   var MONTHS = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+  var IMPORTED_DATA_KEYS = ['scorecard-prototype-imported-data-v1', 'scorecard-imported-data-v1', 'scorecard-imported-data'];
   var cachedRaw = null;
   var cachedSnapshot = null;
 
@@ -14,12 +15,52 @@
     return String(value == null ? '' : value).trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
   }
 
+  function normalizeText(value) {
+    return String(value == null ? '' : value).trim().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  }
+
+  function field(row, names) {
+    if (!row) return undefined;
+    var keys = Object.keys(row);
+    for (var index = 0; index < names.length; index += 1) {
+      var expected = normalizeText(names[index]).replace(/[^a-z0-9]/g, '');
+      for (var keyIndex = 0; keyIndex < keys.length; keyIndex += 1) {
+        if (normalizeText(keys[keyIndex]).replace(/[^a-z0-9]/g, '') === expected) return row[keys[keyIndex]];
+      }
+    }
+    return undefined;
+  }
+
+  function normalizeRow(row) {
+    var normalized = {};
+    Object.keys(row || {}).forEach(function (key) {
+      normalized[normalizeText(key).replace(/[^a-z0-9]/g, '')] = row[key];
+    });
+    return normalized;
+  }
+
+  function readSnapshotFromStorage() {
+    for (var index = 0; index < IMPORTED_DATA_KEYS.length; index += 1) {
+      var key = IMPORTED_DATA_KEYS[index];
+      var raw = localStorage.getItem(key);
+      if (!raw) continue;
+      try {
+        var parsed = JSON.parse(raw);
+        if (parsed && parsed.records && typeof parsed.records === 'object') return parsed;
+        console.warn('Estrutura de dados importados inválida ignorada:', key);
+      }
+      catch (error) { console.warn('Dados importados inválidos ignorados:', key, error); }
+    }
+    return null;
+  }
+
   function snapshot() {
-    var raw = localStorage.getItem('scorecard-prototype-imported-data-v1');
-    if (raw !== cachedRaw) {
-      cachedRaw = raw;
-      try { cachedSnapshot = raw ? JSON.parse(raw) : null; }
-      catch (error) { cachedSnapshot = null; console.warn('Dados importados inválidos; usando coleções vazias.', error); }
+    var raw = readSnapshotFromStorage();
+    var nextSnapshot = raw && raw.records ? raw : { records: {} };
+    var serialized = JSON.stringify(nextSnapshot);
+    if (serialized !== cachedRaw) {
+      cachedRaw = serialized;
+      cachedSnapshot = nextSnapshot;
     }
     return cachedSnapshot || { records: {} };
   }
@@ -40,37 +81,33 @@
   function getOperators() {
     var imported = importedRows('OPERADORES').map(function (item) {
       var row = item.row || {};
-      var username = normalizeUsuario(row.usuario || row.username);
+      var username = normalizeUsuario(field(row, ['Usuario', 'username']));
       var account = window.USER_SERVICE.getAll().find(function (user) {
         return normalizeUsuario(user.username) === username;
       });
-      var role = String(row.perfil || '').toLowerCase().indexOf('coordenador') >= 0 ? 'coordinator' : account ? account.role : 'operator';
+      var role = normalizeText(field(row, ['Perfil', 'role'])).indexOf('coordenador') >= 0 ? 'coordinator' : account ? account.role : 'operator';
       return {
         id: item.userId || (account && account.id) || username,
         username: username,
-        name: row.nome || (account && account.name) || username,
-        initials: String(row.nome || '').trim().split(/\s+/).slice(0, 2).map(function (part) { return part.charAt(0); }).join('').toUpperCase(),
-        area: row.area || '',
-        function: row.funcao || '',
-        jobTitle: row.funcao || '',
-        shift: row.turno || '',
+        name: field(row, ['Nome', 'name']) || (account && account.name) || username,
+        initials: String(field(row, ['Nome', 'name']) || '').trim().split(/\s+/).slice(0, 2).map(function (part) { return part.charAt(0); }).join('').toUpperCase(),
+        area: field(row, ['Area', 'Área', 'area']) || '',
+        function: field(row, ['Funcao', 'Função', 'function']) || '',
+        jobTitle: field(row, ['Funcao', 'Função', 'jobTitle']) || '',
+        shift: field(row, ['Turno', 'shift']) || '',
         role: role,
-        status: row.status || 'Ativo',
-        coordinator: row.coordenador || 'Michelle Faria'
+        status: field(row, ['Status', 'status']) || 'Ativo',
+        coordinator: field(row, ['Coordenador', 'coordinator']) || 'Michelle Faria'
       };
     });
     if (imported.length) return imported.filter(function (operator) { return operator.role === 'operator'; });
-    if (hasImportedData()) return window.USER_SERVICE.getAll().filter(function (user) {
-      return user.role === 'operator';
-    }).map(function (user) {
-      return { id: user.id, username: normalizeUsuario(user.username), name: user.name, area: user.area || '', role: user.role, status: user.active ? 'Ativo' : 'Inativo', coordinator: user.coordinatorName || 'Michelle Faria' };
-    });
+    if (hasImportedData()) return [];
     return (window.PROTOTYPE_DATA.operators || []).filter(function (operator) { return operator.role !== 'coordinator' && operator.username !== 'michellefaria'; });
   }
 
   function rowsOrFallback(sheet, fallback) {
     var records = importedRows(sheet);
-    if (hasImportedData()) return records.map(function (item) { return Object.assign({}, item.row, { userId: item.userId || '' }); });
+    if (hasImportedData()) return records.map(function (item) { return Object.assign(normalizeRow(item.row), { userId: item.userId || '' }); });
     return fallback || [];
   }
 
@@ -108,35 +145,66 @@
         var serial = new Date(Date.UTC(1899, 11, 30) + value * 86400000);
         return new Date(serial.getUTCFullYear(), serial.getUTCMonth(), serial.getUTCDate());
       }
-      var timestamp = new Date(value);
+      var timestamp = new Date(Math.abs(value) >= 1000000000 && Math.abs(value) < 100000000000 ? value * 1000 : value);
       return Number.isNaN(timestamp.getTime()) ? null : timestamp;
     }
     if (typeof value !== 'string' || !value.trim()) return null;
     var input = value.trim();
     var br = input.match(/^(\d{1,2})[/.](\d{1,2})[/.](\d{4})(?:\s.*)?$/);
     if (br) {
-      var brazilian = new Date(Number(br[3]), Number(br[2]) - 1, Number(br[1]));
-      return brazilian.getFullYear() === Number(br[3]) && brazilian.getMonth() === Number(br[2]) - 1 && brazilian.getDate() === Number(br[1]) ? brazilian : null;
+      var day = Number(br[1]);
+      var month = Number(br[2]);
+      var year = Number(br[3]);
+      var brazilian = new Date(year, month - 1, day);
+      return brazilian.getFullYear() === year && brazilian.getMonth() === month - 1 && brazilian.getDate() === day ? brazilian : null;
     }
     if (/^\d{5}(?:\.\d+)?$/.test(input)) return parsePortalDate(Number(input));
+    if (/^\d{10}$/.test(input)) return new Date(Number(input) * 1000);
     if (/^\d{13}$/.test(input)) return new Date(Number(input));
     var iso = input.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:$|T|\s)/);
-    if (iso) return new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
+    if (iso) {
+      var isoDate = new Date(Number(iso[1]), Number(iso[2]) - 1, Number(iso[3]));
+      return isoDate.getFullYear() === Number(iso[1]) && isoDate.getMonth() === Number(iso[2]) - 1 && isoDate.getDate() === Number(iso[3]) ? isoDate : null;
+    }
     var parsed = new Date(input);
     return Number.isNaN(parsed.getTime()) ? null : parsed;
   }
 
   function monthNumber(value) {
     if (value == null || value === '') return null;
-    var numeric = Number(value);
-    if (Number.isInteger(numeric) && numeric >= 1 && numeric <= 12) return numeric;
-    var normalized = String(value).trim().toLocaleLowerCase('pt-BR');
-    var month = MONTHS.indexOf(normalized);
-    return month >= 0 ? month + 1 : null;
+    if (typeof value === 'number') return value >= 1 && value <= 12 ? value : null;
+    var text = normalizeText(value);
+    if (/^\d{1,2}$/.test(text)) {
+      var numericMonth = Number(text);
+      return numericMonth >= 1 && numericMonth <= 12 ? numericMonth : null;
+    }
+    var matches = MONTHS.map(function (month, index) { return text === month || text === month.substring(0, 3) ? index + 1 : null; }).filter(function (month) { return month != null; });
+    return matches.length ? matches[0] : null;
   }
 
   function selectedUser(filters) {
-    return normalizeUsuario(filters.selectedUser);
+    var value = normalizeUsuario(filters && filters.selectedUser);
+    return value === 'TODOS' || value === 'TODAS' ? '' : value;
+  }
+
+  function resolveAreaUsers(area, operators) {
+    if (!area || area === 'TODAS') return null;
+    var normalizedArea = normalizeArea(area);
+    var users = Object.create(null);
+    (operators || getOperators()).forEach(function (operator) {
+      var username = normalizeUsuario(operator && (operator.username || operator.usuario || operator.Usuario));
+      if (username && normalizeArea(operator && (operator.area || operator.Area)) === normalizedArea) users[username] = true;
+    });
+    return users;
+  }
+
+  function resolveUserFromRow(row, operatorMap, accountsById) {
+    var usuario = normalizeUsuario(field(row, ['Usuario', 'username']));
+    var userId = field(row, ['userId']);
+    if (!usuario && userId) {
+      usuario = normalizeUsuario(accountsById[userId] || ((operatorMap[userId] && operatorMap[userId].username) || ''));
+    }
+    return usuario;
   }
 
   function applyFilters(records, filters, operators) {
@@ -145,29 +213,39 @@
     var area = normalizeArea(filters.selectedArea);
     var month = filters.selectedMonth;
     var year = filters.selectedYear;
-    var usersInArea = Object.create(null);
     var accountsById = Object.create(null);
+    var operatorMap = Object.create(null);
+    var filteredOperators = operators || getOperators();
     window.USER_SERVICE.getAll().forEach(function (account) { accountsById[account.id] = account.username; });
-    if (area && area !== 'TODAS') {
-      (operators || getOperators()).forEach(function (operator) {
-        if (normalizeArea(operator.area) === area) usersInArea[normalizeUsuario(operator.username)] = true;
-      });
-    }
+    filteredOperators.forEach(function (operator) {
+      if (operator && operator.id) operatorMap[operator.id] = operator;
+      var username = normalizeUsuario(operator && (operator.username || operator.usuario));
+      if (operator && operator.id && !operatorMap[operator.id].username && username) operatorMap[operator.id].username = username;
+    });
+    var usersInArea = resolveAreaUsers(filters.selectedArea, filteredOperators);
+
     return (records || []).filter(function (row) {
-      var usuario = normalizeUsuario(row.usuario || row.username);
-      if (!usuario && row.userId) {
-        usuario = normalizeUsuario(accountsById[row.userId]);
-      }
+      var usuario = resolveUserFromRow(row, operatorMap, accountsById);
       if (user && usuario !== user) return false;
-      if (area && area !== 'TODAS' && !usersInArea[usuario]) return false;
-      if (row.ano != null && row.mes != null && !row.data) {
-        if (year && year !== 'Todos' && Number(row.ano) !== Number(year)) return false;
-        if (month && month !== 'Todos os meses' && monthNumber(row.mes) !== monthNumber(month)) return false;
+      if (area && area !== 'TODAS' && !(usersInArea && usersInArea[usuario])) return false;
+
+      var rowYear = field(row, ['Ano', 'year', 'anoMeta']);
+      var rowMonth = field(row, ['Mes', 'month', 'mesMeta']);
+      var rawDate = field(row, ['Data', 'date']);
+
+      if (rowYear != null && rowMonth != null && !rawDate) {
+        if (year && normalizeText(year) !== 'todos' && Number(rowYear) !== Number(year)) return false;
+        if (month && normalizeText(month) !== 'todos os meses' && monthNumber(rowMonth) !== monthNumber(month)) return false;
         return true;
       }
-      var date = parsePortalDate(row.data || row.date);
-      if (month && month !== 'Todos os meses' && (!date || date.getMonth() + 1 !== monthNumber(month))) return false;
-      if (year && year !== 'Todos' && (!date || date.getFullYear() !== Number(year))) return false;
+
+      var date = parsePortalDate(rawDate);
+      if (month && normalizeText(month) !== 'todos os meses') {
+        if (!date || date.getMonth() + 1 !== monthNumber(month)) return false;
+      }
+      if (year && normalizeText(year) !== 'todos') {
+        if (!date || date.getFullYear() !== Number(year)) return false;
+      }
       return true;
     });
   }
@@ -175,9 +253,11 @@
   function availableYears() {
     var records = snapshot().records || {};
     var years = Object.keys(records).reduce(function (all, id) {
-      var item = records[id], date = item && item.row && parsePortalDate(item.row.data);
+      var item = records[id];
+      var row = item && item.row ? item.row : null;
+      var date = row && parsePortalDate(field(row, ['Data', 'date']));
       if (date && all.indexOf(String(date.getFullYear())) < 0) all.push(String(date.getFullYear()));
-      if (item && item.sheet === 'METAS' && item.row && item.row.ano && all.indexOf(String(item.row.ano)) < 0) all.push(String(item.row.ano));
+      if (item && item.sheet === 'METAS' && row && row.ano && all.indexOf(String(row.ano)) < 0) all.push(String(row.ano));
       return all;
     }, []);
     return years.sort(function (left, right) { return Number(right) - Number(left); });
