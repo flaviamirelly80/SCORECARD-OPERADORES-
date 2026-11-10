@@ -1,6 +1,8 @@
 window.PORTAL_CONFIG = {
-  dataSource: 'local',
-  apiBaseUrl: 'http://localhost:4000/api',
+  dataSource: (window.PORTAL_DATA_SOURCE === 'local' || !window.PORTAL_DATA_SOURCE) &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') ? 'local' : 'supabase',
+  supabaseUrl: window.PORTAL_SUPABASE_URL || '',
+  supabaseAnonKey: window.PORTAL_SUPABASE_ANON_KEY || '',
   logoPath: 'assets/logo/ChatGPT Image 24 de ago. de 2026, 14_52_54.png',
   months: [
     'Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho',

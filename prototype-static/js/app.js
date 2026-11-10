@@ -8,11 +8,11 @@
   var persistedUsers = window.USER_SERVICE.getAll();
   data.operators.forEach(function (operator) {
     var account = persistedUsers.find(function (user) { return window.USER_SERVICE.normalizeUsername(user.username) === window.USER_SERVICE.normalizeUsername(operator.username); });
-    operator.role = account ? account.role : operator.id === 'coord-01' ? 'coordinator' : 'operator';
+    operator.role = account ? account.role : operator.id === 'coord-demo' ? 'coordinator' : 'operator';
   });
   var app = document.getElementById('app');
   var state = {
-    user: window.AUTH_SERVICE.currentUser() || null,
+    user: window.PORTAL_API.enabled() ? null : window.AUTH_SERVICE.currentUser() || null,
     view: 'overview',
     selectedOperator: null,
     month: 'Todos os meses',
@@ -30,6 +30,9 @@
     viewingUserId: null,
     importPreview: null,
     profileMessage: '',
+    profileError: '',
+    dataLoadStatus: 'idle',
+    dataLoadErrors: [],
   };
 
   function escapeHtml(value) {
@@ -88,12 +91,65 @@
     app.dataset.rendered = 'true';
   }
 
+  function loadRemoteSnapshot() {
+    state.dataLoadStatus = 'loading';
+    state.dataLoadErrors = [];
+    return window.PORTAL_API.request('/portal/snapshot').then(function (snapshot) {
+      window.USER_SERVICE.setRemoteUsers(snapshot.users);
+      portalData.setRemoteSnapshot(snapshot.records);
+      state.dataLoadErrors = snapshot.errors || [];
+      state.dataLoadStatus = state.dataLoadErrors.length ? 'error' : 'loaded';
+      if (state.dataLoadErrors.length) console.warn('Falha ao carregar algumas fontes de dados do portal.', state.dataLoadErrors);
+      window.EXCEL_IMPORT.hydrate(data);
+      return snapshot;
+    }).catch(function (error) {
+      window.USER_SERVICE.setRemoteUsers([]);
+      portalData.setRemoteSnapshot([]);
+      state.dataLoadErrors = [{ resource: 'all', message: error.message || 'Falha ao consultar o Supabase.' }];
+      state.dataLoadStatus = 'error';
+      console.error('Não foi possível carregar os dados do portal.', error);
+      return null;
+    });
+  }
+
+  function refreshRemoteSnapshot() {
+    var pending = loadRemoteSnapshot();
+    if (state.user && !state.user.mustChangePassword) renderShell();
+    return pending.then(function () {
+      if (state.user && !state.user.mustChangePassword) renderShell();
+    });
+  }
+
+  function initialize() {
+    if (!window.PORTAL_API.enabled()) {
+      render();
+      return;
+    }
+    window.SUPABASE_SERVICE.hasSession().then(function (hasSession) {
+      if (!hasSession) return;
+      return window.PORTAL_API.request('/auth/me').then(function (result) {
+        state.user = result.user;
+        render();
+        if (result.user.mustChangePassword) return;
+        return refreshRemoteSnapshot();
+      });
+    }).then(function () {
+      if (!state.user) render();
+    }).catch(function (error) {
+      console.error('Não foi possível restaurar a sessão do portal.', error);
+      state.user = null;
+      render();
+      var loginError = document.getElementById('login-error');
+      if (loginError) loginError.textContent = 'Não foi possível restaurar sua sessão. Tente entrar novamente.';
+    });
+  }
+
   function renderPasswordChange(firstAccess) {
     app.innerHTML = '<main class="password-page"><div class="password-card">' + logoMarkup('password-logo') + '<p class="overline red">Segurança da conta</p><h1>Defina sua nova senha</h1><p class="muted">' + (firstAccess ? 'Esta é sua primeira entrada no Portal de Desempenho. Para continuar, defina uma nova senha.' : 'Atualize sua senha para manter o acesso protegido.') + '</p><form id="password-form"><label for="new-password">Nova senha</label><input id="new-password" type="password" required><div class="password-rules" id="password-rules"><span data-rule="length">○ 8 caracteres</span><span data-rule="upper">○ Letra maiúscula</span><span data-rule="lower">○ Letra minúscula</span><span data-rule="number">○ Número</span></div><label for="confirm-password">Confirmar nova senha</label><input id="confirm-password" type="password" required><p id="password-error" class="form-error"></p><button class="primary-button" type="submit">Salvar nova senha ' + icon('arrow') + '</button></form></div></main>';
     var newInput = document.getElementById('new-password');
     function updateRules() { var rules = window.AUTH_SERVICE.validatePassword(newInput.value); Object.keys(rules).forEach(function (rule) { var element = document.querySelector('[data-rule="' + rule + '"]'); element.textContent = (rules[rule] ? '✓ ' : '○ ') + element.textContent.slice(2); element.classList.toggle('passed', rules[rule]); }); }
     newInput.addEventListener('input', updateRules);
-    document.getElementById('password-form').addEventListener('submit', function (event) { event.preventDefault(); var password = newInput.value; var confirmation = document.getElementById('confirm-password').value; var error = document.getElementById('password-error'); if (password !== confirmation) { error.textContent = 'As senhas não conferem.'; return; } var result = firstAccess ? window.AUTH_SERVICE.firstPassword(state.user.id, password) : window.AUTH_SERVICE.changePassword(state.user.id, state.user.password, password); if (result.error) { error.textContent = result.error; return; } state.user = result.user; state.view = 'overview'; render(); });
+    document.getElementById('password-form').addEventListener('submit', function (event) { event.preventDefault(); var password = newInput.value; var confirmation = document.getElementById('confirm-password').value; var error = document.getElementById('password-error'); if (password !== confirmation) { error.textContent = 'As senhas não conferem.'; return; } Promise.resolve(firstAccess ? window.AUTH_SERVICE.firstPassword(state.user.id, password) : window.AUTH_SERVICE.changePassword(state.user.id, state.user.password, password)).then(function (result) { if (result.error) { error.textContent = result.error; return; } state.user = result.user; state.view = 'overview'; render(); if (window.PORTAL_API.enabled()) refreshRemoteSnapshot(); }).catch(function (failure) { error.textContent = failure.message || 'Não foi possível alterar a senha.'; }); });
   }
 
   function renderLogin() {
@@ -104,7 +160,7 @@
       '<form id="login-form"><label for="username">Usuário</label><input id="username" name="username" type="text" placeholder="Digite seu usuário" autocomplete="username" required><label for="password">Senha</label><input id="password" name="password" type="password" placeholder="Digite sua senha" autocomplete="current-password" required><button class="primary-button" type="submit">Entrar ' + icon('arrow') + '</button><button class="text-button" id="forgot-password" type="button">Esqueci minha senha</button><p id="login-error" class="form-error" role="alert"></p></form>' +
       '</div></section></main>';
     document.getElementById('login-form').addEventListener('submit', handleLogin);
-    document.getElementById('forgot-password').addEventListener('click', function () { document.getElementById('login-error').textContent = 'A recuperação automática de senha será disponibilizada após a integração do portal ao ambiente corporativo.'; });
+    document.getElementById('forgot-password').addEventListener('click', function () { document.getElementById('login-error').textContent = 'A redefinição de senha deve ser solicitada à equipe administradora do portal.'; });
   }
 
   function handleLogin(event) {
@@ -113,22 +169,30 @@
     var username = form.get('username');
     var password = form.get('password');
     var error = document.getElementById('login-error');
-    var result = window.AUTH_SERVICE.login(username, password);
-    if (result.error) {
-      error.textContent = result.error;
-      return;
-    }
-    state.user = result.user;
-    state.view = result.user.mustChangePassword ? 'change-password' : result.user.role === 'coordinator' ? 'team' : 'overview';
-    render();
+    Promise.resolve(window.AUTH_SERVICE.login(username, password)).then(function (result) {
+      if (result.error) {
+        error.textContent = result.error;
+        return;
+      }
+      state.user = result.user;
+      state.view = result.user.mustChangePassword ? 'change-password' : 'overview';
+      render();
+      if (!result.user.mustChangePassword && window.PORTAL_API.enabled()) refreshRemoteSnapshot();
+    }).catch(function (failure) {
+      error.textContent = failure.message || 'Não foi possível entrar.';
+    });
   }
 
   function renderShell() {
     var isCoordinator = state.user.role === 'coordinator';
     var nav = isCoordinator ? coordinatorNav() : operatorNav();
     var logoPath = config.logoPath;
-    app.innerHTML = '<div class="app-shell"><aside class="sidebar"><div class="sidebar-brand"><div class="brand-logo small"><img src="' + logoPath + '" alt="Logo da empresa" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'grid\';"><span class="brand-mark small">Portal</span></div></div><div class="profile-mini"><div class="avatar">' + initials(state.user.name) + '</div><div><strong>' + escapeHtml(state.user.name) + '</strong><span>' + (state.user.role === 'coordinator' ? 'COORDENADOR' : 'OPERADOR') + '</span></div></div><nav class="main-nav"><p class="nav-label">Menu principal</p>' + nav + '</nav><button class="logout-button" id="logout-button">' + icon('logout') + ' Sair</button></aside><main class="content"><header class="topbar"><button class="mobile-menu" id="mobile-menu" aria-label="Abrir menu">☰</button><div><p class="breadcrumb">Portal <span>/</span> ' + pageTitle() + '</p><h1>' + pageTitle() + '</h1></div><div class="topbar-date">' + state.month + ' ' + state.year + '<span>Dados locais de desenvolvimento</span></div></header><div class="page-content">' + pageContent() + '</div></main></div>';
-    document.getElementById('logout-button').addEventListener('click', function () { window.AUTH_SERVICE.logout(); state.user = null; render(); });
+    var previousNav = app.querySelector('.main-nav');
+    var navScrollTop = previousNav ? previousNav.scrollTop : 0;
+    app.innerHTML = '<div class="app-shell"><aside class="sidebar"><div class="sidebar-brand"><div class="brand-logo small"><img src="' + logoPath + '" alt="Logo da empresa" onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'grid\';"><span class="brand-mark small">Portal</span></div></div><div class="profile-mini"><div class="avatar">' + initials(state.user.name) + '</div><div><strong>' + escapeHtml(state.user.name) + '</strong><span>' + (state.user.role === 'coordinator' ? 'COORDENADOR' : 'OPERADOR') + '</span></div></div><nav class="main-nav"><p class="nav-label">Menu principal</p>' + nav + '</nav><button class="logout-button" id="logout-button">' + icon('logout') + ' Sair</button></aside><main class="content"><header class="topbar"><button class="mobile-menu" id="mobile-menu" aria-label="Abrir menu">☰</button><div><p class="breadcrumb">Portal <span>/</span> ' + pageTitle() + '</p><h1>' + pageTitle() + '</h1></div><div class="topbar-date">' + state.month + ' ' + state.year + '<span>' + (window.PORTAL_API.enabled() ? 'Dados do banco central' : 'Dados locais de desenvolvimento') + '</span></div></header><div class="page-content">' + dataStatusMarkup() + pageContent() + '</div></main></div>';
+    var currentNav = app.querySelector('.main-nav');
+    if (currentNav) currentNav.scrollTop = navScrollTop;
+    document.getElementById('logout-button').addEventListener('click', function () { window.AUTH_SERVICE.logout(); window.USER_SERVICE.setRemoteUsers([]); portalData.setRemoteSnapshot([]); state.user = null; render(); });
     bindNav();
     bindPageActions();
   }
@@ -138,7 +202,7 @@
   }
 
   function coordinatorNav() {
-    return navItem('overview', 'Visão geral', 'overview') + navItem('team', 'Minha equipe', 'team') + navItem('overview', 'Visão individual', 'overview') + navItem('journey', 'Jornada', 'journey') + navItem('etiquetas', 'Etiquetas', 'tag') + navItem('metas-area', 'Metas da área', 'team') + navItem('bos', 'BOS', 'bos') + navItem('bosq', 'BOSQ', 'bos') + navItem('ideias', 'Ideias', 'ideas') + navItem('import', 'Importar dados', 'upload') + navItem('export', 'Exportar dados', 'download') + navItem('users', 'Gestão de usuários', 'team') + navItem('profile', 'Meu perfil', 'team');
+    return navItem('overview', 'Visão geral', 'overview') + navItem('team', 'Minha equipe', 'team') + navItem('individual', 'Visão individual', 'overview') + navItem('journey', 'Jornada', 'journey') + navItem('etiquetas', 'Etiquetas', 'tag') + navItem('metas-area', 'Metas da área', 'team') + navItem('bos', 'BOS', 'bos') + navItem('bosq', 'BOSQ', 'bos') + navItem('ideias', 'Ideias', 'ideas') + navItem('import', 'Importar dados', 'upload') + navItem('export', 'Exportar dados', 'download') + navItem('users', 'Gestão de usuários', 'team') + navItem('profile', 'Meu perfil', 'team');
   }
 
   function navItem(view, label, iconName) {
@@ -146,8 +210,9 @@
   }
 
   function bindNav() {
-    document.querySelectorAll('[data-view]').forEach(function (button) {
-      button.addEventListener('click', function () {
+    document.querySelectorAll('#app [data-view]').forEach(function (button) {
+      button.addEventListener('click', function (event) {
+        event.preventDefault();
         state.view = button.dataset.view;
         renderShell();
       });
@@ -156,11 +221,35 @@
     if (mobileMenu) mobileMenu.addEventListener('click', function () { document.querySelector('.sidebar').classList.toggle('open'); });
   }
 
+  function dataStatusMarkup() {
+    if (!window.PORTAL_API.enabled() || state.dataLoadStatus === 'idle' || state.view === 'profile') return '';
+    if (state.dataLoadStatus === 'loading') return '<p class="muted" role="status">Carregando dados do Supabase...</p>';
+    if (state.dataLoadStatus !== 'error') return '';
+    var resourcesByView = {
+      overview: ['users', 'operators', 'journey', 'labels', 'bos', 'bosq', 'ideas', 'goals', 'all'],
+      individual: ['users', 'operators', 'journey', 'labels', 'bos', 'bosq', 'ideas', 'goals', 'all'],
+      team: ['users', 'operators', 'all'],
+      journey: ['journey', 'all'],
+      etiquetas: ['labels', 'all'],
+      'metas-area': ['operators', 'journey', 'labels', 'bos', 'bosq', 'ideas', 'goals', 'all'],
+      bos: ['bos', 'all'],
+      bosq: ['bosq', 'all'],
+      ideias: ['ideas', 'all'],
+      import: ['users', 'operators', 'journey', 'labels', 'bos', 'bosq', 'ideas', 'goals', 'all'],
+      export: ['users', 'operators', 'journey', 'labels', 'bos', 'bosq', 'ideas', 'goals', 'all'],
+      users: ['users', 'all']
+    };
+    var resources = resourcesByView[state.view] || [];
+    var errors = state.dataLoadErrors.filter(function (item) { return resources.indexOf(item.resource) >= 0; });
+    if (!errors.length) return '';
+    return '<p class="form-error" role="alert">Não foi possível carregar alguns dados desta página. Você ainda pode navegar pelo portal.</p>';
+  }
+
   function bindPageActions() {
     document.querySelectorAll('[data-select-operator]').forEach(function (button) {
       button.addEventListener('click', function () {
         var operator = portalData.getOperators().find(function (item) { return String(item.id) === String(button.dataset.selectOperator); });
-        if (operator) { state.selectedOperator = operator; state.view = 'overview'; renderShell(); }
+        if (operator) { state.selectedOperator = operator; state.view = 'individual'; renderShell(); }
       });
     });
     ['month-filter', 'year-filter', 'area-filter'].forEach(function (id) {
@@ -195,7 +284,21 @@
     if (exportButton) exportButton.addEventListener('click', window.EXCEL_IMPORT.exportAll);
     document.querySelectorAll('[data-export-sheet]').forEach(function (button) { button.addEventListener('click', function () { window.EXCEL_IMPORT.exportSheet(button.dataset.exportSheet); }); });
     var profileForm = document.getElementById('profile-password-form');
-    if (profileForm) profileForm.addEventListener('submit', function (event) { event.preventDefault(); var current = document.getElementById('current-profile-password').value; var password = document.getElementById('new-profile-password').value; var confirmation = document.getElementById('confirm-profile-password').value; var error = document.getElementById('profile-password-error'); if (password !== confirmation) { error.textContent = 'As senhas não conferem.'; return; } var result = window.AUTH_SERVICE.changePassword(state.user.id, current, password); if (result.error) error.textContent = result.error; else { state.user = result.user; error.textContent = 'Senha alterada com sucesso.'; } });
+    if (profileForm) profileForm.addEventListener('submit', function (event) {
+      event.preventDefault();
+      var current = document.getElementById('current-profile-password').value;
+      var password = document.getElementById('new-profile-password').value;
+      var confirmation = document.getElementById('confirm-profile-password').value;
+      var error = document.getElementById('profile-password-error');
+      if (password !== confirmation) { error.textContent = 'As senhas não conferem.'; return; }
+      Promise.resolve(window.AUTH_SERVICE.changePassword(state.user.id, current, password)).then(function (result) {
+        if (result.error) { error.textContent = result.error; return; }
+        state.user = result.user;
+        error.textContent = 'Senha alterada com sucesso.';
+      }).catch(function (failure) {
+        error.textContent = failure.message || 'Não foi possível alterar a senha.';
+      });
+    });
     var saveUser = document.getElementById('save-user');
     if (saveUser) saveUser.addEventListener('click', saveUserForm);
     var roleInput = document.getElementById('user-role');
@@ -230,7 +333,7 @@
   }
 
   function pageTitle() {
-    var titles = { overview: 'Visão geral', journey: 'Minha jornada', etiquetas: 'Etiquetas', 'metas-area': 'Metas da área', bos: 'BOS', bosq: 'BOSQ', ideias: 'Ideias de melhoria', evolution: 'Minha evolução', team: 'Minha equipe', import: 'Importar dados', export: 'Exportar dados', users: 'Gestão de usuários', profile: 'Meu perfil' };
+    var titles = { overview: 'Visão geral', individual: 'Visão individual', journey: state.user.role === 'coordinator' ? 'Jornada' : 'Minha jornada', etiquetas: 'Etiquetas', 'metas-area': 'Metas da área', bos: 'BOS', bosq: 'BOSQ', ideias: state.user.role === 'coordinator' ? 'Ideias' : 'Ideias de melhoria', evolution: 'Minha evolução', team: 'Minha equipe', import: 'Importar dados', export: 'Exportar dados', users: 'Gestão de usuários', profile: 'Meu perfil' };
     return titles[state.view] || 'Visão geral';
   }
 
@@ -238,6 +341,7 @@
     if (['import', 'export'].includes(state.view) && state.user.role !== 'coordinator') return '<section class="page-intro"><h2>Acesso restrito</h2><p class="muted">Somente coordenadores podem gerenciar dados.</p></section>';
     if (['users', 'new-user', 'edit-user', 'view-user'].includes(state.view) && state.user.role !== 'coordinator') return '<section class="page-intro"><h2>Acesso restrito</h2><p class="muted">Somente coordenadores podem gerir usuários.</p></section>';
     if (state.view === 'team') return teamPage();
+    if (state.view === 'individual') return state.selectedOperator ? overviewPage() : teamPage(true);
     if (state.view === 'users') return usersPage();
     if (state.view === 'new-user' || state.view === 'edit-user') return userForm();
     if (state.view === 'view-user') return viewUserPage();
@@ -256,7 +360,7 @@
   function teamOperators() {
     return portalData.getOperators().filter(function (operator) {
       var coordinator = portalData.normalizeArea(operator.coordinator);
-      return operator.role === 'operator' && (!state.user || state.user.role !== 'coordinator' || !coordinator || coordinator === portalData.normalizeArea(state.user.name) || coordinator === 'MICHELLE FARIA');
+      return operator.role === 'operator' && (!state.user || state.user.role !== 'coordinator' || !coordinator || coordinator === portalData.normalizeArea(state.user.name));
     });
   }
 
@@ -301,9 +405,13 @@
     return portalData.applyFilters(getRecords(sheet), portalFilters(overrides), portalData.getOperators());
   }
 
+  function hasPortalData() {
+    return window.PORTAL_API.enabled() || portalData.hasImportedData();
+  }
+
   function operatorForId(operatorId) {
     var operator = portalData.getOperators().find(function (item) { return String(item.id) === String(operatorId); });
-    if (operator || portalData.hasImportedData()) return operator || null;
+    if (operator || hasPortalData()) return operator || null;
     return data.operators.find(function (item) { return String(item.id) === String(operatorId); }) || null;
   }
 
@@ -315,7 +423,7 @@
   }
 
   function getOperatorGoalValue(operatorId, metricKey, year, month) {
-    if (portalData.hasImportedData()) {
+    if (hasPortalData()) {
       var operator = operatorForId(operatorId);
       if (!operator) return 0;
       var aliases = { IDEIAS_ABERTAS: 'IDEIAS' };
@@ -348,7 +456,7 @@
 
   function countLabelEntries(operatorId, category, status, year, month) {
     var operator = operatorForId(operatorId);
-    if (portalData.hasImportedData()) {
+    if (hasPortalData()) {
       if (!operator) return 0;
       return portalData.applyFilters(getRecords('ETIQUETAS'), {
         selectedUser: operator.username, selectedArea: state.area, selectedMonth: month, selectedYear: year
@@ -366,14 +474,16 @@
     var year = state.year;
     var month = state.month;
     var operator = operatorForId(operatorId);
-    if (portalData.hasImportedData()) {
+    if (hasPortalData()) {
       if (!operator) return 0;
       var filters = { selectedUser: operator.username, selectedArea: state.area, selectedMonth: month, selectedYear: year };
       if (metricKey === 'SHE_ABERTAS') return countLabelEntries(operatorId, 'SHE', 'ABERTA', year, month);
       if (metricKey === 'SHE_FECHADAS') return countLabelEntries(operatorId, 'SHE', 'FECHADA', year, month);
       if (metricKey === 'BOS') return portalData.applyFilters(getRecords('BOS'), filters, portalData.getOperators()).length;
       if (metricKey === 'BOSQ') return portalData.applyFilters(getRecords('BOSQ'), filters, portalData.getOperators()).length;
-      if (metricKey === 'IDEIAS_ABERTAS') return portalData.applyFilters(getRecords('IDEIAS'), filters, portalData.getOperators()).length;
+      if (metricKey === 'IDEIAS_ABERTAS') return portalData.applyFilters(getRecords('IDEIAS'), filters, portalData.getOperators()).filter(function (entry) {
+        return String(entry.status || '').trim().toUpperCase() === 'ABERTA';
+      }).length;
       if (metricKey === 'MA') return portalData.applyFilters(getRecords('ETIQUETAS'), filters, portalData.getOperators()).filter(function (entry) { return String(entry.categoria || '').toUpperCase() === 'MA'; }).length;
       return 0;
     }
@@ -392,11 +502,11 @@
   }
 
   function getMonthlyGoalSummary(operatorId) {
-    var bosGoal = portalData.hasImportedData() ? getOperatorGoalValue(operatorId, 'BOS', state.year, state.month) : goalConfig().monthly.BOS;
-    var bosqGoal = portalData.hasImportedData() ? getOperatorGoalValue(operatorId, 'BOSQ', state.year, state.month) : goalConfig().monthly.BOSQ;
-    var sheOpenGoal = portalData.hasImportedData() ? getOperatorGoalValue(operatorId, 'SHE_ABERTAS', state.year, state.month) : goalConfig().monthly.SHE_ABERTAS;
-    var sheClosedGoal = portalData.hasImportedData() ? getOperatorGoalValue(operatorId, 'SHE_FECHADAS', state.year, state.month) : goalConfig().monthly.SHE_FECHADAS;
-    var ideasGoal = portalData.hasImportedData() ? getOperatorGoalValue(operatorId, 'IDEIAS_ABERTAS', state.year, state.month) : goalConfig().monthly.IDEIAS_ABERTAS;
+    var bosGoal = hasPortalData() ? getOperatorGoalValue(operatorId, 'BOS', state.year, state.month) : goalConfig().monthly.BOS;
+    var bosqGoal = hasPortalData() ? getOperatorGoalValue(operatorId, 'BOSQ', state.year, state.month) : goalConfig().monthly.BOSQ;
+    var sheOpenGoal = hasPortalData() ? getOperatorGoalValue(operatorId, 'SHE_ABERTAS', state.year, state.month) : goalConfig().monthly.SHE_ABERTAS;
+    var sheClosedGoal = hasPortalData() ? getOperatorGoalValue(operatorId, 'SHE_FECHADAS', state.year, state.month) : goalConfig().monthly.SHE_FECHADAS;
+    var ideasGoal = hasPortalData() ? getOperatorGoalValue(operatorId, 'IDEIAS_ABERTAS', state.year, state.month) : goalConfig().monthly.IDEIAS_ABERTAS;
     var summary = {
       BOS: { meta: bosGoal, realizado: getMetricRealized(operatorId, 'BOS'), status: goalStatusText(getMetricRealized(operatorId, 'BOS'), bosGoal) },
       BOSQ: { meta: bosqGoal, realizado: getMetricRealized(operatorId, 'BOSQ'), status: goalStatusText(getMetricRealized(operatorId, 'BOSQ'), bosqGoal) },
@@ -422,7 +532,7 @@
   }
 
   function formatMetricForScope(metric, operators) {
-    if (portalData.hasImportedData()) return metric.value;
+    if (hasPortalData()) return metric.value;
     if (state.user.role !== 'coordinator' || state.selectedOperator || operators.length === teamOperators().length) return metric.value;
     var ratio = operators.length / Math.max(teamOperators().length, 1);
     if (metric.id === 'etiquetas' || metric.id === 'bos' || metric.id === 'ideias') {
@@ -455,7 +565,7 @@
   }
 
   function dashboardMetrics() {
-    if (!portalData.hasImportedData()) {
+    if (!hasPortalData()) {
       return data.metrics.map(function (metric) { return Object.assign({}, metric, { value: formatMetricForScope(metric, visibleOperators()) }); });
     }
     var filters = portalFilters();
@@ -529,6 +639,41 @@
 
   function confirmExcelImport() {
     if (!state.importPreview) return;
+    if (window.PORTAL_API.enabled()) {
+      state.importPreview.importing = true;
+      state.importPreview.importError = '';
+      renderShell();
+      var preview = state.importPreview;
+      var records = preview.result.valid.map(function (item) {
+        return { sheet: item.sheet, line: item.line, row: item.row, importKey: window.EXCEL_IMPORT.identity(item) };
+      });
+      var rejectedRows = Object.create(null);
+      preview.result.errors.forEach(function (item) {
+        if (Number(item.line) > 1) rejectedRows[item.sheet + '|' + item.line] = true;
+      });
+      window.PORTAL_API.request('/import', {
+        method: 'POST',
+        body: JSON.stringify({
+          fileName: preview.file,
+          records: records,
+          rejected: Object.keys(rejectedRows).length,
+          duplicates: preview.result.counts.duplicates,
+          errors: preview.result.errors
+        })
+      }).then(function (report) {
+        preview.report = report;
+        preview.confirmed = true;
+        return loadRemoteSnapshot().catch(function (error) {
+          preview.refreshError = error.message || 'Importação concluída, mas não foi possível atualizar a interface.';
+        });
+      }).catch(function (error) {
+        preview.importError = error.message || 'Não foi possível confirmar a importação.';
+      }).then(function () {
+        preview.importing = false;
+        renderShell();
+      });
+      return;
+    }
     try {
       var result = state.importPreview.result;
       var importedOperators = result.valid.filter(function (item) { return item.sheet === 'OPERADORES'; });
@@ -572,10 +717,20 @@
     var result = preview && preview.result;
     var report = preview && preview.report;
     var summary = result ? '<div class="import-summary"><div><span>Registros encontrados</span><strong>' + result.counts.total + '</strong></div><div class="valid"><span>Registros válidos</span><strong>' + result.counts.valid + '</strong></div><div class="new"><span>Novos registros</span><strong>' + result.counts.newRecords + '</strong></div><div class="updated"><span>Serão atualizados</span><strong>' + result.counts.updates + '</strong></div><div class="invalid"><span>Registros com erro</span><strong>' + result.counts.errors + '</strong></div><div class="invalid"><span>Possíveis duplicidades</span><strong>' + result.counts.duplicates + '</strong></div></div>' : '';
-    var errors = result && result.errors.length ? '<div class="import-errors"><h4>Erros encontrados</h4>' + result.errors.slice(0, 12).map(function (error) { return '<p><strong>' + error.sheet + ', linha ' + error.line + ':</strong> ' + error.message + '</p>'; }).join('') + (result.errors.length > 12 ? '<p>+' + (result.errors.length - 12) + ' erros adicionais.</p>' : '') + '</div>' : '';
+    var errors = result && result.errors.length ? '<div class="import-errors"><h4>Erros encontrados</h4>' + result.errors.slice(0, 12).map(function (error) { return '<p><strong>' + escapeHtml(error.sheet) + ', linha ' + Number(error.line) + ':</strong> ' + escapeHtml(error.message) + '</p>'; }).join('') + (result.errors.length > 12 ? '<p>+' + (result.errors.length - 12) + ' erros adicionais.</p>' : '') + '</div>' : '';
     if (preview && preview.importError) errors += '<div class="import-errors"><p>' + escapeHtml(preview.importError) + '</p></div>';
-    var finished = report ? '<div class="import-success"><strong>IMPORTAÇÃO CONCLUÍDA</strong><span>Registros adicionados: ' + report.added + '</span><span>Registros atualizados: ' + report.updated + '</span><span>Registros ignorados: ' + report.ignored + '</span><span>Registros com erro: ' + report.errors + '</span><small>Atualizado em ' + report.importedAt + '. Persistência temporária local.</small></div>' : '';
-    return '<section class="page-intro"><p class="overline red">Gestão de dados</p><h2>Importar dados</h2><p class="muted">Atualize o portal a partir de um único arquivo Excel com as abas padronizadas.</p></section><div class="notice-banner"><span class="notice-icon">i</span><div><strong>Excel → Site</strong><p>Esta é uma importação demonstrativa. Os dados ficam somente neste navegador, em localStorage, até a integração futura com a API e o banco de dados.</p></div></div><section class="import-panel"><div class="import-panel-heading"><div><p class="overline">Etapa 1</p><h3>Selecione o arquivo Excel</h3><p class="muted">Use .xlsx, .xls ou .csv. O arquivo pode conter as abas OPERADORES, JORNADA, ETIQUETAS, BOS, BOSQ, IDEIAS e METAS.</p></div><div class="import-tools"><button class="outline-button" id="download-template">' + icon('download') + ' Baixar modelo de Excel</button><button class="outline-button" id="export-excel">' + icon('download') + ' Exportar dados atuais</button></div></div><label class="file-drop" for="excel-file"><span class="upload-circle">' + icon('upload') + '</span><strong>Escolha um arquivo para importar</strong><small>Depois da leitura você verá a prévia antes de confirmar.</small><input id="excel-file" type="file" accept=".xlsx,.xls,.csv"></label><p id="import-status" class="import-status"></p></section>' + (summary ? '<section class="import-panel preview-panel"><div class="table-heading"><div><p class="overline">Etapas 2 a 7</p><h3>Prévia da importação</h3></div><strong class="file-name">' + escapeHtml(preview.file) + '</strong></div>' + summary + errors + (report ? finished : '<div class="import-actions"><button class="outline-button" id="cancel-import">Cancelar</button><button class="primary-button" id="confirm-import">Confirmar importação ' + icon('arrow') + '</button></div>') + '</section>' : '') + '<section class="import-panel schema-panel"><div><p class="overline">Estrutura esperada</p><h3>Abas e identificadores</h3><p class="muted">O campo Usuario é a chave principal para identificar cada colaborador. Os registros das demais abas são associados ao colaborador através desse identificador. Registros repetidos usam a combinação de identificação de cada aba para atualizar, não duplicar.</p></div><div class="schema-list">' + Object.keys(window.EXCEL_IMPORT.SHEETS).map(function (sheet) { return '<span><strong>' + sheet + '</strong>' + window.EXCEL_IMPORT.SHEETS[sheet].join(' · ') + '</span>'; }).join('') + '</div></section>';
+    if (preview && preview.refreshError) errors += '<div class="import-errors"><p>' + escapeHtml(preview.refreshError) + '</p></div>';
+    if (report && report.errorRows && report.errorRows.length) errors += '<div class="import-errors"><h4>Validação no servidor</h4>' + report.errorRows.slice(0, 12).map(function (error) { return '<p><strong>' + escapeHtml(error.sheet) + ', linha ' + error.line + ':</strong> ' + escapeHtml(error.message) + '</p>'; }).join('') + (report.errorRows.length > 12 ? '<p>+ outros erros retornados pelo servidor.</p>' : '') + '</div>';
+    var labels = { operators: 'Operadores', attendance: 'Jornada', labels: 'Etiquetas', bos: 'BOS', bosq: 'BOSQ', ideas: 'Ideias', goals: 'Metas' };
+    var counts = report && report.summary ? Object.keys(labels).map(function (key) {
+      var value = report.summary[key] || { created: 0, updated: 0 };
+      return '<span>' + labels[key] + ': ' + value.created + ' novos, ' + value.updated + ' atualizados</span>';
+    }).join('') : '';
+    var finished = report ? '<div class="import-success"><strong>' + (report.errors ? 'IMPORTAÇÃO CONCLUÍDA COM ALERTAS' : 'IMPORTAÇÃO CONCLUÍDA') + '</strong><span>Registros encontrados: ' + (report.recordsFound == null ? result.counts.total : report.recordsFound) + '</span><span>Novos registros: ' + report.added + '</span><span>Registros atualizados: ' + report.updated + '</span><span>Registros rejeitados: ' + (report.rejected == null ? report.ignored : report.rejected) + '</span><span>Erros: ' + report.errors + '</span>' + counts + '<small>Atualizado em ' + escapeHtml(report.importedAt || '') + ' · ' + (window.PORTAL_API.enabled() ? 'Supabase' : 'armazenamento local') + (report.durationMs ? ' · ' + report.durationMs + ' ms' : '') + '</small></div>' : '';
+    var apiMode = window.PORTAL_API.enabled();
+    var notice = apiMode ? 'A confirmação envia os registros validados diretamente ao Supabase. O arquivo Excel não é salvo neste navegador nem no repositório.' : 'Modo local de desenvolvimento: a importação fica neste navegador até a configuração do Supabase.';
+    var confirmText = preview && preview.importing ? 'Enviando para o banco central…' : 'Confirmar importação ' + icon('arrow');
+    return '<section class="page-intro"><p class="overline red">Gestão de dados</p><h2>Importar dados</h2><p class="muted">Atualize o portal a partir de um único arquivo Excel com as abas padronizadas.</p></section><div class="notice-banner"><span class="notice-icon">i</span><div><strong>Excel → Site</strong><p>' + notice + '</p></div></div><section class="import-panel"><div class="import-panel-heading"><div><p class="overline">Etapa 1</p><h3>Selecione o arquivo Excel</h3><p class="muted">Use .xlsx, .xls ou .csv. O arquivo pode conter as abas OPERADORES, JORNADA, ETIQUETAS, BOS, BOSQ, IDEIAS e METAS.</p></div><div class="import-tools"><button class="outline-button" id="download-template">' + icon('download') + ' Baixar modelo de Excel</button><button class="outline-button" id="export-excel">' + icon('download') + ' Exportar dados atuais</button></div></div><label class="file-drop" for="excel-file"><span class="upload-circle">' + icon('upload') + '</span><strong>Escolha um arquivo para importar</strong><small>Depois da leitura você verá a prévia antes de confirmar.</small><input id="excel-file" type="file" accept=".xlsx,.xls,.csv"></label><p id="import-status" class="import-status"></p></section>' + (summary ? '<section class="import-panel preview-panel"><div class="table-heading"><div><p class="overline">Etapas 2 a 7</p><h3>Prévia da importação</h3></div><strong class="file-name">' + escapeHtml(preview.file) + '</strong></div>' + summary + errors + (report ? finished : '<div class="import-actions"><button class="outline-button" id="cancel-import"' + (preview.importing ? ' disabled' : '') + '>Cancelar</button><button class="primary-button" id="confirm-import"' + (preview.importing ? ' disabled' : '') + '>' + confirmText + '</button></div>') + '</section>' : '') + '<section class="import-panel schema-panel"><div><p class="overline">Estrutura esperada</p><h3>Abas e identificadores</h3><p class="muted">O campo Usuario é a chave principal para identificar cada colaborador. Os registros das demais abas são associados ao colaborador através desse identificador. Registros repetidos usam a combinação de identificação de cada aba para atualizar, não duplicar.</p></div><div class="schema-list">' + Object.keys(window.EXCEL_IMPORT.SHEETS).map(function (sheet) { return '<span><strong>' + sheet + '</strong>' + window.EXCEL_IMPORT.SHEETS[sheet].join(' · ') + '</span>'; }).join('') + '</div></section>';
   }
 
   function exportPage() {
@@ -597,8 +752,9 @@
         (state.userShiftFilter === 'Todos' || user.shift === state.userShiftFilter) &&
         (state.userCoordinatorFilter === 'Todos' || (coordinator && coordinator.id === state.userCoordinatorFilter));
     });
-    var message = state.profileMessage ? '<p class="form-success">' + escapeHtml(state.profileMessage) + '</p>' : '';
+    var message = (state.profileMessage ? '<p class="form-success">' + escapeHtml(state.profileMessage) + '</p>' : '') + (state.profileError ? '<p class="form-error">' + escapeHtml(state.profileError) + '</p>' : '');
     state.profileMessage = '';
+    state.profileError = '';
     return '<section class="page-intro"><p class="overline red">Administração</p><h2>Gestão de usuários</h2><p class="muted">Cadastre e mantenha usuários diretamente pelo portal.</p></section>' + message + '<div class="users-toolbar"><input id="user-search" type="search" value="' + escapeHtml(state.usersQuery) + '" placeholder="Pesquisar por nome ou usuário"><button class="primary-button" data-view="new-user">+ Cadastrar usuário</button></div><div class="filters user-filters"><label>Perfil<select id="user-role-filter"><option value="Todos">Todos</option><option value="operator">Operador</option><option value="coordinator">Coordenador</option></select></label><label>Área / Processo<select id="user-area-filter"><option value="Todas">Todas</option>' + areas.map(function (item) { return '<option>' + escapeHtml(item) + '</option>'; }).join('') + '</select></label><label>Turno<select id="user-shift-filter"><option>Todos</option>' + shifts.map(function (item) { return '<option>' + escapeHtml(item) + '</option>'; }).join('') + '</select></label><label>Coordenador<select id="user-coordinator-filter"><option value="Todos">Todos</option>' + coordinators.map(function (item) { return '<option value="' + item.id + '">' + escapeHtml(item.name) + '</option>'; }).join('') + '</select></label><label>Status<select id="user-status-filter"><option value="Todos">Todos</option><option value="active">Ativo</option><option value="inactive">Inativo</option></select></label></div><section class="table-panel team-panel"><div class="table-heading"><div><p class="overline">' + users.length + ' usuários</p><h3>Lista de usuários</h3></div><span class="updated">Sem exclusão definitiva</span></div><div class="table-scroll"><table><thead><tr><th>Nome</th><th>Usuário</th><th>Perfil</th><th>Função</th><th>Área / Processo</th><th>Turno</th><th>Coordenador</th><th>Status</th><th>Último acesso</th><th>Ações</th></tr></thead><tbody>' + users.map(function (user) { var coordinator = coordinators.find(function (item) { return item.id === user.coordinatorId; }); return '<tr><td><strong>' + escapeHtml(user.name) + '</strong></td><td>' + escapeHtml(user.username) + '</td><td>' + (user.role === 'coordinator' ? 'COORDENADOR' : 'OPERADOR') + '</td><td>' + escapeHtml(user.jobTitle) + '</td><td>' + escapeHtml(user.area) + '</td><td>' + escapeHtml(user.shift || '-') + '</td><td>' + (coordinator ? escapeHtml(coordinator.name) : '-') + '</td><td><span class="status ' + (user.active ? 'on-track' : 'warning') + '">' + (user.active ? 'Ativo' : 'Inativo') + '</span></td><td>' + (user.lastLogin ? new Date(user.lastLogin).toLocaleDateString('pt-BR') : '-') + '</td><td><div class="user-actions"><button data-user-action="view" data-user-id="' + user.id + '">Visualizar</button><button data-user-action="edit" data-user-id="' + user.id + '">Editar</button><button data-user-action="reset" data-user-id="' + user.id + '">Resetar senha</button><button data-user-action="toggle" data-user-id="' + user.id + '">' + (user.active ? 'Desativar' : 'Ativar') + '</button></div></td></tr>'; }).join('') + '</tbody></table></div></section>';
   }
 
@@ -608,7 +764,7 @@
     var editing = state.view === 'edit-user' ? window.USER_SERVICE.getById(state.editingUserId) : null;
     var value = function (key) { return editing ? escapeHtml(editing[key] || '') : ''; };
     var selected = function (key, option) { return editing && editing[key] === option ? ' selected' : ''; };
-      return '<section class="page-intro"><p class="overline red">Administração</p><h2>' + (editing ? 'Editar usuário' : 'Cadastrar usuário') + '</h2><p class="muted">' + (editing ? 'Atualize o cadastro diretamente pelo portal.' : 'O novo usuário receberá uma senha temporária e deverá alterá-la no primeiro acesso.') + '</p></section><section class="import-panel user-form"><div class="form-grid"><label>Nome completo *<input id="user-name" value="' + value('name') + '" required></label><label>Usuário / Login *<input id="user-username" value="' + value('username') + '" placeholder="Ex.: michelle.faria" required></label><label>Perfil *<select id="user-role"><option value="operator"' + selected('role', 'operator') + '>OPERADOR</option><option value="coordinator"' + selected('role', 'coordinator') + '>COORDENADOR</option></select></label><label>Função *<input id="user-job" value="' + value('jobTitle') + '" placeholder="Ex.: Operador de Processos" required></label><label>Área / Processo *<select id="user-area"><option value="">Selecione</option>' + areaOptions.map(function (item) { return '<option value="' + item + '"' + selected('area', item) + '>' + item + '</option>'; }).join('') + '</select></label><label>Turno<input id="user-shift" value="' + value('shift') + '" placeholder="Opcional"></label><label id="coordinator-field">Coordenador responsável<select id="user-coordinator"><option value="">Selecione</option>' + coordinators.map(function (item) { return '<option value="' + item.id + '"' + selected('coordinatorId', item.id) + '>' + escapeHtml(item.name) + '</option>'; }).join('') + '</select></label><label>Status *<select id="user-status"><option value="active"' + (!editing || editing.active ? ' selected' : '') + '>ATIVO</option><option value="inactive"' + (editing && !editing.active ? ' selected' : '') + '>INATIVO</option></select></label></div><p id="user-form-error" class="form-error"></p><div class="import-actions"><button class="outline-button" data-view="users">Cancelar</button><button class="primary-button" id="save-user">' + (editing ? 'Salvar alterações' : 'Salvar usuário') + ' ' + icon('arrow') + '</button></div></section>';
+      return '<section class="page-intro"><p class="overline red">Administração</p><h2>' + (editing ? 'Editar usuário' : 'Cadastrar usuário') + '</h2><p class="muted">' + (editing ? 'Atualize o cadastro diretamente pelo portal.' : 'O novo usuário receberá uma senha temporária e deverá alterá-la no primeiro acesso.') + '</p></section><section class="import-panel user-form"><div class="form-grid"><label>Nome completo *<input id="user-name" value="' + value('name') + '" required></label><label>Usuário / Login *<input id="user-username" value="' + value('username') + '" placeholder="Ex.: operador.exemplo" required></label><label>Perfil *<select id="user-role"><option value="operator"' + selected('role', 'operator') + '>OPERADOR</option><option value="coordinator"' + selected('role', 'coordinator') + '>COORDENADOR</option></select></label><label>Função *<input id="user-job" value="' + value('jobTitle') + '" placeholder="Ex.: Operador de Processos" required></label><label>Área / Processo *<select id="user-area"><option value="">Selecione</option>' + areaOptions.map(function (item) { return '<option value="' + item + '"' + selected('area', item) + '>' + item + '</option>'; }).join('') + '</select></label><label>Turno<input id="user-shift" value="' + value('shift') + '" placeholder="Opcional"></label><label id="coordinator-field">Coordenador responsável<select id="user-coordinator"><option value="">Selecione</option>' + coordinators.map(function (item) { return '<option value="' + item.id + '"' + selected('coordinatorId', item.id) + '>' + escapeHtml(item.name) + '</option>'; }).join('') + '</select></label><label>Status *<select id="user-status"><option value="active"' + (!editing || editing.active ? ' selected' : '') + '>ATIVO</option><option value="inactive"' + (editing && !editing.active ? ' selected' : '') + '>INATIVO</option></select></label></div><p id="user-form-error" class="form-error"></p><div class="import-actions"><button class="outline-button" data-view="users">Cancelar</button><button class="primary-button" id="save-user">' + (editing ? 'Salvar alterações' : 'Salvar usuário') + ' ' + icon('arrow') + '</button></div></section>';
   }
 
   function viewUserPage() {
@@ -622,11 +778,44 @@
     return '<section class="page-intro"><p class="overline red">Minha conta</p><h2>Meu perfil</h2><p class="muted">Dados cadastrais e segurança da sua conta.</p></section><section class="import-panel profile-card"><div class="avatar large">' + initials(state.user.name) + '</div><div><h3>' + escapeHtml(state.user.name) + '</h3><p class="muted">' + escapeHtml(state.user.username) + ' · ' + (state.user.role === 'coordinator' ? 'COORDENADORA' : 'OPERADOR') + '</p><p class="muted">' + escapeHtml(state.user.jobTitle) + ' · ' + escapeHtml(state.user.area) + '</p><p class="muted">Status: ' + (state.user.active ? 'Ativo' : 'Inativo') + '</p></div></section><section class="import-panel"><p class="overline">Segurança</p><h3>Alterar senha</h3><p class="muted">A nova senha deve ter 8 caracteres, maiúscula, minúscula e número.</p><form id="profile-password-form" class="profile-password"><label>Senha atual<input id="current-profile-password" type="password" required></label><label>Nova senha<input id="new-profile-password" type="password" required></label><label>Confirmar nova senha<input id="confirm-profile-password" type="password" required></label><p id="profile-password-error" class="form-error"></p><button class="primary-button" type="submit">Alterar senha</button></form></section>';
   }
 
-  function saveUserForm() { var input = { name: document.getElementById('user-name').value, username: document.getElementById('user-username').value, role: document.getElementById('user-role').value, jobTitle: document.getElementById('user-job').value, area: document.getElementById('user-area').value, shift: document.getElementById('user-shift').value, coordinatorId: document.getElementById('user-coordinator').value, status: document.getElementById('user-status').value }; var result = state.view === 'edit-user' ? window.USER_SERVICE.update(state.editingUserId, input) : window.USER_SERVICE.create(input); if (result.error) { document.getElementById('user-form-error').textContent = result.error; return; } state.profileMessage = state.view === 'edit-user' ? 'Usuário atualizado com sucesso.' : 'Usuário cadastrado com sucesso. Senha temporária configurada para o primeiro acesso.'; state.editingUserId = null; state.view = 'users'; renderShell(); }
-  function handleUserAction(event) { var action = event.currentTarget.dataset.userAction; var id = event.currentTarget.dataset.userId; if (action === 'view') { state.viewingUserId = id; state.view = 'view-user'; renderShell(); return; } if (action === 'edit') { state.editingUserId = id; state.view = 'edit-user'; renderShell(); return; } if (action === 'reset') { if (window.confirm('Resetar a senha deste usuário? Ele deverá trocar a senha no próximo login.')) { window.USER_SERVICE.resetPassword(id); state.profileMessage = 'Senha resetada. O usuário deverá trocar a senha no próximo login.'; } } else if (action === 'toggle') { window.USER_SERVICE.toggleActive(id); state.profileMessage = 'Status do usuário atualizado.'; } renderShell(); }
+  function saveUserForm() {
+    var input = { name: document.getElementById('user-name').value, username: document.getElementById('user-username').value, role: document.getElementById('user-role').value, jobTitle: document.getElementById('user-job').value, area: document.getElementById('user-area').value, shift: document.getElementById('user-shift').value, coordinatorId: document.getElementById('user-coordinator').value, status: document.getElementById('user-status').value };
+    var editing = state.view === 'edit-user';
+    var button = document.getElementById('save-user');
+    button.disabled = true;
+    Promise.resolve(editing ? window.USER_SERVICE.update(state.editingUserId, input) : window.USER_SERVICE.create(input)).then(function (result) {
+      if (result && result.error) throw new Error(result.error);
+      state.profileMessage = editing ? 'Usuário atualizado com sucesso.' : 'Usuário cadastrado com sucesso. Senha temporária configurada para o primeiro acesso.';
+      state.profileError = '';
+      state.editingUserId = null;
+      state.view = 'users';
+      renderShell();
+    }).catch(function (failure) {
+      document.getElementById('user-form-error').textContent = failure.message || 'Não foi possível salvar o usuário.';
+      button.disabled = false;
+    });
+  }
+  function handleUserAction(event) {
+    var action = event.currentTarget.dataset.userAction;
+    var id = event.currentTarget.dataset.userId;
+    if (action === 'view') { state.viewingUserId = id; state.view = 'view-user'; renderShell(); return; }
+    if (action === 'edit') { state.editingUserId = id; state.view = 'edit-user'; renderShell(); return; }
+    if (action === 'reset' && !window.confirm('Resetar a senha deste usuário? Ele deverá trocar a senha no próximo login.')) return;
+    var operation = action === 'reset' ? window.USER_SERVICE.resetPassword(id) : window.USER_SERVICE.toggleActive(id);
+    Promise.resolve(operation).then(function (result) {
+      if (result && result.error) throw new Error(result.error);
+      state.profileMessage = action === 'reset' ? 'Senha resetada. O usuário deverá trocar a senha no próximo login.' : 'Status do usuário atualizado.';
+      state.profileError = '';
+      renderShell();
+    }).catch(function (failure) {
+      state.profileError = failure.message || 'Não foi possível atualizar o usuário.';
+      state.profileMessage = '';
+      renderShell();
+    });
+  }
 
   function overviewPage() {
-    var isTeam = state.user.role === 'coordinator' && !state.selectedOperator;
+    var isTeam = state.user.role === 'coordinator' && !state.selectedOperator && state.view !== 'individual';
     var operators = visibleOperators();
     var user = isTeam ? null : (state.selectedOperator || state.user);
     var metrics = dashboardMetrics();
@@ -661,7 +850,7 @@
   }
 
   function metricPage(type) {
-    if (portalData.hasImportedData()) return importedMetricPage(type);
+    if (hasPortalData()) return importedMetricPage(type);
     var metric = data.metrics.find(function (item) { return item.id === type; }) || data.metrics[1];
     var goal = type === 'bos' ? '40' : '90%';
     var annual = state.month === 'Todos os meses';
@@ -697,7 +886,7 @@
   }
 
   function ideasPage() {
-    if (portalData.hasImportedData()) return importedIdeasPage();
+    if (hasPortalData()) return importedIdeasPage();
     var ideas = data.ideas;
     var isTeam = state.user.role === 'coordinator' && !state.selectedOperator;
     var operators = visibleOperators();
@@ -725,7 +914,7 @@
   }
 
   function labelsPage() {
-    if (portalData.hasImportedData()) return importedLabelsPage();
+    if (hasPortalData()) return importedLabelsPage();
     var category = state.labelCategory === 'MA' ? 'MA' : 'SHE';
     var rows = data.operators.filter(function (operator) { return operator.role === 'operator' && (state.area === 'Todas' || operator.area === state.area); });
     var summary = rows.map(function (operator) {
@@ -779,7 +968,7 @@
   }
 
   function areaGoalsPage() {
-    if (portalData.hasImportedData()) return importedAreaGoalsPage();
+    if (hasPortalData()) return importedAreaGoalsPage();
     var rows = data.operators.filter(function (operator) { return operator.role === 'operator' && (state.area === 'Todas' || operator.area === state.area); });
     var year = state.year || '2026';
     var month = state.month || 'Abril';
@@ -828,18 +1017,18 @@
     return '<section class="page-intro"><p class="overline red">Acompanhamento da área</p><h2>Metas da área</h2><p class="muted">Realizados calculados a partir dos registros importados no período selecionado.</p></section>' + filters + stats + breakdown + '<section class="table-panel"><div class="table-heading"><div><p class="overline">Performance da equipe</p><h3>Consolidado</h3></div><span class="updated">' + escapeHtml(period) + '</span></div><div class="table-scroll"><table><thead><tr><th>Colaborador</th><th>BOS</th><th>BOSQ</th><th>SHE AB.</th><th>SHE FECH.</th><th>IDEIA</th><th>Geral</th></tr></thead><tbody>' + (body || '<tr><td colspan="7">Nenhum operador no período e área selecionados.</td></tr>') + '</tbody></table></div></section>';
   }
 
-  function teamPage() {
+  function teamPage(individualMode) {
     var sourceOperators = portalData.getOperators();
     var rows = sourceOperators.filter(function (operator) { return operator.role === 'operator' && (state.area === 'Todas' || portalData.normalizeArea(operator.area) === portalData.normalizeArea(state.area)); });
     rows = rows.map(function (operator) {
-      if (!portalData.hasImportedData()) return operator;
+      if (!hasPortalData()) return operator;
       var summary = getMonthlyGoalSummary(operator.id);
       var passing = ['BOS', 'BOSQ', 'SHE_ABERTAS', 'SHE_FECHADAS', 'IDEIAS_ABERTAS'].filter(function (key) { return summary[key].status === 'OK'; }).length;
       return Object.assign({}, operator, { score: passing * 20, status: summary.GERAL.status });
     });
     var teamTotals = sourceOperators.filter(function (operator) { return operator.role === 'operator'; });
     var areas = teamTotals.map(function (operator) { return operator.area; }).filter(function (area, index, all) { return area && all.indexOf(area) === index; }).sort();
-    return '<section class="welcome-row"><div><p class="overline red">Gestão de performance</p><h2>Minha equipe</h2><p class="muted">Selecione um operador para visualizar seus indicadores individuais.</p></div><button class="primary-button compact" data-view="overview">Ver selecionado ' + icon('arrow') + '</button></section><div class="filters"><label>Pesquisar operador<input id="operator-search" type="search" placeholder="Nome do operador..."></label><label>Mês<select id="month-filter"><option>Abril</option><option>Março</option><option>Fevereiro</option></select></label><label>Ano<select id="year-filter"><option>2026</option><option>2025</option></select></label><label>Área<select id="area-filter"><option value="Todas"' + (state.area === 'Todas' ? ' selected' : '') + '>Todas</option>' + areas.map(function (area) { return '<option value="' + escapeHtml(area) + '"' + (state.area === area ? ' selected' : '') + '>' + escapeHtml(area) + '</option>'; }).join('') + '</select></label></div><section class="table-panel team-panel"><div class="table-heading"><div><p class="overline">' + rows.length + ' operadores</p><h3>Performance individual</h3></div><span class="updated">Total da equipe: ' + teamTotals.length + '</span></div><div class="table-scroll"><table><thead><tr><th>Operador</th><th>Área</th><th>Turno</th><th>Scorecard</th><th>Status</th><th></th></tr></thead><tbody>' + rows.map(function (operator) { return '<tr data-operator-row="' + escapeHtml(operator.name + ' ' + operator.area) + '"><td><div class="table-person"><span class="avatar small-avatar">' + operator.initials + '</span><strong>' + operator.name + '</strong></div></td><td>' + operator.area + '</td><td>' + operator.shift + '</td><td><div class="score-cell"><strong>' + operator.score + '%</strong><span><i style="width:' + operator.score + '%"></i></span></div></td><td><span class="status ' + (operator.score > 90 ? 'on-track' : operator.score > 80 ? 'neutral' : 'warning') + '">' + operator.status + '</span></td><td><button class="table-action" data-select-operator="' + operator.id + '" aria-label="Ver indicadores de ' + operator.name + '">' + icon('arrow') + '</button></td></tr>'; }).join('') + '</tbody></table></div></section>';
+    return '<section class="welcome-row"><div><p class="overline red">' + (individualMode ? 'Acompanhamento individual' : 'Gestão de performance') + '</p><h2>' + (individualMode ? 'Visão individual' : 'Minha equipe') + '</h2><p class="muted">Selecione um operador para visualizar seus indicadores individuais.</p></div><button class="primary-button compact" data-view="' + (individualMode ? 'individual' : 'overview') + '">Ver selecionado ' + icon('arrow') + '</button></section><div class="filters"><label>Pesquisar operador<input id="operator-search" type="search" placeholder="Nome do operador..."></label><label>Mês<select id="month-filter"><option>Abril</option><option>Março</option><option>Fevereiro</option></select></label><label>Ano<select id="year-filter"><option>2026</option><option>2025</option></select></label><label>Área<select id="area-filter"><option value="Todas"' + (state.area === 'Todas' ? ' selected' : '') + '>Todas</option>' + areas.map(function (area) { return '<option value="' + escapeHtml(area) + '"' + (state.area === area ? ' selected' : '') + '>' + escapeHtml(area) + '</option>'; }).join('') + '</select></label></div><section class="table-panel team-panel"><div class="table-heading"><div><p class="overline">' + rows.length + ' operadores</p><h3>Performance individual</h3></div><span class="updated">Total da equipe: ' + teamTotals.length + '</span></div><div class="table-scroll"><table><thead><tr><th>Operador</th><th>Área</th><th>Turno</th><th>Scorecard</th><th>Status</th><th></th></tr></thead><tbody>' + rows.map(function (operator) { return '<tr data-operator-row="' + escapeHtml(operator.name + ' ' + operator.area) + '"><td><div class="table-person"><span class="avatar small-avatar">' + operator.initials + '</span><strong>' + operator.name + '</strong></div></td><td>' + operator.area + '</td><td>' + operator.shift + '</td><td><div class="score-cell"><strong>' + operator.score + '%</strong><span><i style="width:' + operator.score + '%"></i></span></div></td><td><span class="status ' + (operator.score > 90 ? 'on-track' : operator.score > 80 ? 'neutral' : 'warning') + '">' + operator.status + '</span></td><td><button class="table-action" data-select-operator="' + operator.id + '" aria-label="Ver indicadores de ' + operator.name + '">' + icon('arrow') + '</button></td></tr>'; }).join('') + '</tbody></table></div></section>';
   }
 
   function statusClass(status) {
@@ -852,5 +1041,5 @@
     return name.split(' ').slice(0, 2).map(function (part) { return part[0]; }).join('').toUpperCase();
   }
 
-  render();
+  initialize();
 }());

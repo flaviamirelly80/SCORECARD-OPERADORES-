@@ -6,4 +6,7 @@ dist
 .vite
 coverage
 *.log
+*.xlsx
+*.xls
+*.csv
 .DS_Store

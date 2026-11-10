@@ -1,54 +1,30 @@
 # Portal de Desempenho dos Operadores
 
-Portal corporativo para acompanhamento individual e gerencial de indicadores de operadores da JDE Peet's.
+Portal para acompanhamento individual e gerencial de indicadores de operadores.
 
 ## Objetivo
 
 - permitir que cada operador acompanhe sua performance individual;
 - permitir que coordenadores visualizem o desempenho de sua equipe;
 - manter o acesso restrito por perfil e por dados;
-- preparar a arquitetura para importação Excel e integração futura com Power Automate.
+- importar dados de Excel para persistência central, acessível em todos os navegadores autorizados.
 
 ## Stack
 
-- Frontend: React + TypeScript + Vite + Tailwind CSS + Recharts
-- Backend: Node.js + Express + TypeScript
-- Banco: PostgreSQL via Prisma ORM, com DDL explícito em `database/schema.sql`
-- Segurança: JWT + RBAC + validação de acesso no backend
+- Portal publicado: HTML/CSS/JavaScript em `prototype-static/` (mantido sem migração visual)
+- Frontend React/Vite: protótipo separado em `frontend/`
+- Dados compartilhados e autenticação: Supabase via cliente JavaScript e políticas RLS
+- `backend/`: implementação anterior, não utilizada pela publicação Supabase do portal
 
 ## Estrutura
 
-- `backend/` – API, Prisma e regras de negócio
-- `frontend/` – aplicação React
-- `.env.example` – variáveis sensíveis de exemplo
+- `prototype-static/supabase/` – schema PostgreSQL, políticas RLS e guia de configuração
+- `backend/` – código legado de API/Prisma; não publicar para a arquitetura Supabase
+- `frontend/` – aplicação React separada; o portal oficial permanece em `prototype-static/`
 
-## Instalação
+## Configuração do Supabase
 
-1. Instale o Node.js LTS.
-2. No diretório raiz, execute:
-   npm install
-3. Configure as variáveis de ambiente copiando `.env.example` para `.env`.
-4. Crie o banco e gere o cliente Prisma:
-   npm run prisma:generate --workspace backend
-   npm run prisma:migrate --workspace backend
-5. Execute o seed de demonstração:
-   npm run prisma:seed --workspace backend
-
-## Iniciar o sistema
-
-- Backend:
-  npm run dev --workspace backend
-- Frontend:
-  npm run dev --workspace frontend
-- Ou em modo combinado:
-  npm run dev
-
-## Login de demonstração
-
-- Coordenadora: `michellefaria` / valor de `DEFAULT_TEMP_PASSWORD`
-- Operadores: username definido no seed / valor de `DEFAULT_TEMP_PASSWORD`
-
-No primeiro login, a API exige `POST /api/auth/change-password` e não libera o dashboard enquanto `must_change_password` estiver ativo.
+Veja [prototype-static/supabase/SETUP.md](prototype-static/supabase/SETUP.md) para schema, configuração de Auth, provisionamento inicial e teste de RLS/multidispositivo. Configure apenas Project URL e chave anon/public no portal; nunca exponha `service_role`.
 
 ## Funcionalidades do MVP
 
@@ -63,8 +39,8 @@ No primeiro login, a API exige `POST /api/auth/change-password` e não libera o 
 
 ## Arquitetura para Power Automate
 
-A API prepara endpoints de integração sob `/api/integrations/*` e autenticação por API Key em ambiente corporativo.
+Integrações externas não fazem parte da persistência direta via Supabase desta configuração.
 
 ## Observações
 
-Consulte [ARCHITECTURE.md](ARCHITECTURE.md) para tabelas, permissões, reset de senha, alternância local/API, rede corporativa e integração futura. O seed usa os 18 operadores já presentes no protótipo e não deve ser executado sobre um banco de produção sem revisão.
+Consulte [ARCHITECTURE.md](ARCHITECTURE.md) para a arquitetura atual. Importar planilhas não cria commits ou redeploys; o GitHub contém somente código. O portal mantém modo local apenas para desenvolvimento localhost.

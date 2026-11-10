@@ -1,8 +1,8 @@
-/* Camada temporaria local. Senhas em texto puro existem apenas no modo demonstrativo. */
+/* Usuários remotos em modo API; armazenamento local apenas no modo demonstrativo. */
 (function () {
   'use strict';
-  var DEFAULT_TEMP_PASSWORD = 'JDE@1234';
-  var MICHELLE_PASSWORD_RESET_KEY = 'scorecard-michelle-password-reset-v1';
+  var remoteUsers = null;
+  function apiMode() { return window.PORTAL_API && window.PORTAL_API.enabled(); }
 
   function normalizeUsuario(value) {
     if (value == null) return '';
@@ -12,7 +12,8 @@
   }
 
   function normalizeRole(role) {
-    return String(role || '').trim().toLowerCase().indexOf('coordenador') >= 0 || String(role || '').trim().toLowerCase() === 'coordinator' ? 'coordinator' : 'operator';
+    var normalized = String(role || '').trim().toLowerCase();
+    return normalized.indexOf('coordenador') >= 0 || normalized === 'coordinator' || normalized === 'admin' ? 'coordinator' : 'operator';
   }
 
   function normalizeActive(user) {
@@ -26,8 +27,7 @@
   }
 
   function normalizeLoginUsername(value) {
-    var username = normalizeUsername(value);
-    return username === 'michelle.faria' ? 'michellefaria' : username;
+    return normalizeUsername(value);
   }
 
   function buildUsernameFromName(name) {
@@ -53,48 +53,13 @@
   }
 
   function initialUsers() {
-    var coordinator = {
-      id: 'coord-01',
-      username: 'michellefaria',
-      name: 'Michelle Faria',
-      role: 'coordinator',
-      jobTitle: 'Coordenadora',
-      area: 'CAFÉ CRU',
-      shift: '',
-      coordinatorId: '',
-      active: true,
-      mustChangePassword: true,
-      password: DEFAULT_TEMP_PASSWORD,
-      lastLogin: null
-    };
-
-    var operators = [
-      { id: 'op-01', username: 'edilson.souza', name: 'Edilson Coimbra de Souza', role: 'operator', jobTitle: 'Operador de Processos', area: 'CAFÉ CRU', shift: '', coordinatorId: 'coord-01', active: true, mustChangePassword: true, password: DEFAULT_TEMP_PASSWORD, lastLogin: null },
-      { id: 'op-02', username: 'felipe.simoes', name: 'Felipe Justino Simoes', role: 'operator', jobTitle: 'Operador de Processos', area: 'CAFÉ CRU', shift: '', coordinatorId: 'coord-01', active: true, mustChangePassword: true, password: DEFAULT_TEMP_PASSWORD, lastLogin: null },
-      { id: 'op-03', username: 'fernando.santos', name: 'Fernando Jose dos Santos', role: 'operator', jobTitle: 'Operador de Processos', area: 'CAFÉ CRU', shift: '', coordinatorId: 'coord-01', active: true, mustChangePassword: true, password: DEFAULT_TEMP_PASSWORD, lastLogin: null },
-      { id: 'op-04', username: 'jose.medeiros', name: 'Jose Roberto de Medeiros', role: 'operator', jobTitle: 'Operador de Processos', area: 'CAFÉ CRU', shift: '', coordinatorId: 'coord-01', active: true, mustChangePassword: true, password: DEFAULT_TEMP_PASSWORD, lastLogin: null },
-      { id: 'op-05', username: 'luiz.souza', name: 'Luiz Felipe de Souza', role: 'operator', jobTitle: 'Operador de Processos', area: 'CAFÉ CRU', shift: '', coordinatorId: 'coord-01', active: true, mustChangePassword: true, password: DEFAULT_TEMP_PASSWORD, lastLogin: null },
-      { id: 'op-06', username: 'luiz.nascimento', name: 'Luiz Laurenco do Nascimento', role: 'operator', jobTitle: 'Operador de Processos', area: 'CAFÉ CRU', shift: '', coordinatorId: 'coord-01', active: true, mustChangePassword: true, password: DEFAULT_TEMP_PASSWORD, lastLogin: null },
-      { id: 'op-07', username: 'nilton.costa', name: 'Nilton Ferreira da Costa', role: 'operator', jobTitle: 'Operador de Processos', area: 'CAFÉ CRU', shift: '', coordinatorId: 'coord-01', active: true, mustChangePassword: true, password: DEFAULT_TEMP_PASSWORD, lastLogin: null },
-      { id: 'op-08', username: 'thais.souza', name: 'Thais Oliveira Souza', role: 'operator', jobTitle: 'Operador de Processos', area: 'CAFÉ CRU', shift: '', coordinatorId: 'coord-01', active: true, mustChangePassword: true, password: DEFAULT_TEMP_PASSWORD, lastLogin: null },
-      { id: 'op-09', username: 'alex.teixeira', name: 'Alex Sandro Alves Teixeira', role: 'operator', jobTitle: 'Operador de Processos', area: 'MOAGEM', shift: '', coordinatorId: 'coord-01', active: true, mustChangePassword: true, password: DEFAULT_TEMP_PASSWORD, lastLogin: null },
-      { id: 'op-10', username: 'daniel.madureira', name: 'Daniel Almeida Madureira', role: 'operator', jobTitle: 'Operador de Processos', area: 'MOAGEM', shift: '', coordinatorId: 'coord-01', active: true, mustChangePassword: true, password: DEFAULT_TEMP_PASSWORD, lastLogin: null },
-      { id: 'op-11', username: 'deivison.chaves', name: 'Deivison Souza Alves Chaves', role: 'operator', jobTitle: 'Operador de Processos', area: 'MOAGEM', shift: '', coordinatorId: 'coord-01', active: true, mustChangePassword: true, password: DEFAULT_TEMP_PASSWORD, lastLogin: null },
-      { id: 'op-12', username: 'rafael.santos', name: 'Rafael da Silva Santos', role: 'operator', jobTitle: 'Operador de Processos', area: 'TORRADOR', shift: '', coordinatorId: 'coord-01', active: true, mustChangePassword: true, password: DEFAULT_TEMP_PASSWORD, lastLogin: null },
-      { id: 'op-13', username: 'eduardo.candido', name: 'Eduardo Luis Candido', role: 'operator', jobTitle: 'Operador de Processos', area: 'TORRADOR', shift: '', coordinatorId: 'coord-01', active: true, mustChangePassword: true, password: DEFAULT_TEMP_PASSWORD, lastLogin: null },
-      { id: 'op-14', username: 'edvaldo.silva', name: 'Edvaldo Rener da Silva', role: 'operator', jobTitle: 'Operador de Processos', area: 'TORRADOR', shift: '', coordinatorId: 'coord-01', active: true, mustChangePassword: true, password: DEFAULT_TEMP_PASSWORD, lastLogin: null },
-      { id: 'op-15', username: 'ivomar.costa', name: 'Ivomar Lopes Costa', role: 'operator', jobTitle: 'Operador de Processos', area: 'TORRADOR', shift: '', coordinatorId: 'coord-01', active: true, mustChangePassword: true, password: DEFAULT_TEMP_PASSWORD, lastLogin: null },
-      { id: 'op-16', username: 'joao.rodrigues', name: 'Joao Pedro Alves Rodrigues', role: 'operator', jobTitle: 'Operador de Processos', area: 'TORRADOR', shift: '', coordinatorId: 'coord-01', active: true, mustChangePassword: true, password: DEFAULT_TEMP_PASSWORD, lastLogin: null },
-      { id: 'op-17', username: 'vinicius.oliveira', name: 'Vinicius Ramos de Oliveira', role: 'operator', jobTitle: 'Operador de Processos', area: 'TORRADOR', shift: '', coordinatorId: 'coord-01', active: true, mustChangePassword: true, password: DEFAULT_TEMP_PASSWORD, lastLogin: null },
-      { id: 'op-18', username: 'edvan.santos', name: 'Edvan Henrique Pires Santos', role: 'operator', jobTitle: 'Operador de Processos', area: 'TORRADOR', shift: '', coordinatorId: 'coord-01', active: true, mustChangePassword: true, password: DEFAULT_TEMP_PASSWORD, lastLogin: null }
+    return [
+      { id: 'coord-demo', username: 'coordinator.demo', name: 'Coordenador de demonstração', role: 'coordinator', jobTitle: 'Coordenação', area: 'ÁREA DEMO', shift: '', coordinatorId: '', active: true, mustChangePassword: true, lastLogin: null },
+      { id: 'op-demo', username: 'operator.demo', name: 'Operador de demonstração', role: 'operator', jobTitle: 'Operador', area: 'ÁREA DEMO', shift: '', coordinatorId: 'coord-demo', active: true, mustChangePassword: true, lastLogin: null }
     ];
-    return [coordinator].concat(operators);
   }
 
   function canonicalUsername(user) {
-    var name = normalizeUsername(user.name || '');
-    if (user.id === 'coord-01' || name === 'michelle.faria' || name === 'michellefaria') return 'michellefaria';
-    if (user.id === 'op-01' || name === 'edilson.coimbra.de.souza' || name === 'edilson.souza') return 'edilson.souza';
     return user.username ? String(user.username).trim() : normalizeLoginUsername(user.email || user.name || '');
   }
 
@@ -103,13 +68,13 @@
     rawUsers.forEach(function (source) {
       if (!source || typeof source !== 'object') return;
       var user = Object.assign({}, source);
+      delete user.password;
       var username = canonicalUsername(user);
       if (!username) return;
       var id = String(user.id || 'u-' + Date.now() + '-' + migrated.length);
       var usernameKey = normalizeUsuario(username);
       var existing = byUsername[usernameKey] || byId[id];
       if (existing) {
-        if (!existing.password && user.password) existing.password = user.password;
         if (existing.mustChangePassword == null && user.mustChangePassword != null) existing.mustChangePassword = Boolean(user.mustChangePassword);
         return;
       }
@@ -117,15 +82,11 @@
       user.username = username;
       user.name = String(user.name || '').trim();
       user.role = normalizeRole(user.role || user.perfil);
-      if (username === 'michellefaria') user.role = 'coordinator';
-      if (username === 'edilson.souza') user.role = 'operator';
       user.jobTitle = String(user.jobTitle || user.function || user.funcao || '').trim();
       user.area = String(user.area || '').trim();
       user.shift = String(user.shift || user.turno || '').trim();
       user.coordinatorId = String(user.coordinatorId || '').trim();
-      if (/^op-\d+$/.test(user.id)) user.coordinatorId = 'coord-01';
       user.active = normalizeActive(user);
-      user.password = typeof user.password === 'string' && user.password ? user.password : DEFAULT_TEMP_PASSWORD;
       user.mustChangePassword = user.mustChangePassword == null ? true : Boolean(user.mustChangePassword);
       user.lastLogin = user.lastLogin || null;
       migrated.push(user);
@@ -136,34 +97,25 @@
   }
 
   function getAll() {
+    if (apiMode()) return remoteUsers || [];
     var saved = window.DATA_SERVICE && window.DATA_SERVICE.load ? window.DATA_SERVICE.load() : null;
     if (saved && Array.isArray(saved.users) && saved.users.length) {
       var migrated = migrateUsers(saved.users);
       if (migrated.length) {
         var changed = JSON.stringify(migrated) !== JSON.stringify(saved.users);
         if (changed) saveAll(migrated);
-        return resetMichellePasswordOnce(migrated);
+        return migrated;
       }
     }
-    return resetMichellePasswordOnce(initialUsers());
+    return initialUsers();
   }
 
   function saveAll(users) {
+    if (apiMode()) { remoteUsers = users; return users; }
     var data = window.DATA_SERVICE && window.DATA_SERVICE.load ? window.DATA_SERVICE.load() : {};
     data = data || {};
     data.users = users;
     if (window.DATA_SERVICE && window.DATA_SERVICE.save) window.DATA_SERVICE.save(data);
-    return users;
-  }
-
-  function resetMichellePasswordOnce(users) {
-    if (localStorage.getItem(MICHELLE_PASSWORD_RESET_KEY)) return users;
-    var michelle = users.find(function (user) { return user.username === 'michellefaria'; });
-    if (!michelle) return users;
-    michelle.password = DEFAULT_TEMP_PASSWORD;
-    michelle.mustChangePassword = true;
-    saveAll(users);
-    localStorage.setItem(MICHELLE_PASSWORD_RESET_KEY, 'true');
     return users;
   }
 
@@ -183,6 +135,17 @@
     var error = validate(safeInput);
     if (error) return { error: error };
     var username = normalizeLoginUsername(safeInput.username || buildUsernameFromName(safeInput.name));
+    if (apiMode()) {
+      return window.PORTAL_API.request('/users', { method: 'POST', body: JSON.stringify({
+        username: username, externalId: safeInput.externalId || null, name: String(safeInput.name || '').trim(),
+        role: normalizeRole(safeInput.role), jobTitle: String(safeInput.jobTitle || '').trim(),
+        area: String(safeInput.area || '').trim(), shift: String(safeInput.shift || '').trim(),
+        coordinatorId: String(safeInput.coordinatorId || '').trim(), active: safeInput.status !== 'inactive'
+      }) }).then(function (result) {
+        remoteUsers = (remoteUsers || []).concat(result);
+        return { user: result };
+      });
+    }
     var user = {
       id: 'u-' + Date.now(),
       username: makeUniqueUsername(username),
@@ -194,7 +157,6 @@
       coordinatorId: String(safeInput.coordinatorId || '').trim(),
       active: safeInput.status !== 'inactive',
       mustChangePassword: true,
-      password: DEFAULT_TEMP_PASSWORD,
       lastLogin: null
     };
     saveAll(getAll().concat(user));
@@ -205,6 +167,17 @@
     var safeInput = input || {};
     var error = validate(safeInput, id);
     if (error) return { error: error };
+    if (apiMode()) {
+      return window.PORTAL_API.request('/users/' + encodeURIComponent(id), { method: 'PUT', body: JSON.stringify({
+        username: normalizeLoginUsername(safeInput.username || buildUsernameFromName(safeInput.name)),
+        name: String(safeInput.name || '').trim(),
+        jobTitle: String(safeInput.jobTitle || '').trim(), area: String(safeInput.area || '').trim(),
+        shift: String(safeInput.shift || '').trim(), active: safeInput.status !== 'inactive'
+      }) }).then(function (result) {
+        remoteUsers = (remoteUsers || []).map(function (user) { return user.id === id ? result : user; });
+        return { user: result };
+      });
+    }
     var users = getAll();
     var user = users.find(function (item) { return item.id === id; });
     if (!user) return { error: 'Usuário não encontrado.' };
@@ -226,7 +199,6 @@
     var users = getAll();
     var user = users.find(function (item) { return item.id === id; });
     if (!user) return { error: 'Usuário não encontrado.' };
-    user.password = password;
     user.mustChangePassword = false;
     saveAll(users);
     return { user: user };
@@ -242,16 +214,30 @@
   }
 
   function resetPassword(id) {
+    if (apiMode()) {
+      return window.PORTAL_API.request('/users/' + encodeURIComponent(id) + '/reset-password', { method: 'POST' }).then(function () {
+        var user = getById(id);
+        if (user) user.mustChangePassword = true;
+        return { user: user };
+      });
+    }
     var users = getAll();
     var user = users.find(function (item) { return item.id === id; });
     if (!user) return { error: 'Usuário não encontrado.' };
-    user.password = DEFAULT_TEMP_PASSWORD;
     user.mustChangePassword = true;
     saveAll(users);
     return { user: user };
   }
 
   function toggleActive(id) {
+    if (apiMode()) {
+      var remote = getById(id);
+      if (!remote) return Promise.reject(new Error('Usuário não encontrado.'));
+      return window.PORTAL_API.request('/users/' + encodeURIComponent(id), { method: 'PUT', body: JSON.stringify({ active: !remote.active }) }).then(function (result) {
+        remoteUsers = (remoteUsers || []).map(function (user) { return user.id === id ? result : user; });
+        return result;
+      });
+    }
     var users = getAll();
     var user = users.find(function (item) { return item.id === id; });
     if (!user) return;
@@ -294,7 +280,6 @@
         coordinatorId: role === 'coordinator' ? '' : coordinator ? coordinator.id : '',
         active: input.active !== false,
         mustChangePassword: true,
-        password: DEFAULT_TEMP_PASSWORD,
         lastLogin: null
       };
       users.push(user);
@@ -304,12 +289,12 @@
   }
 
   window.USER_SERVICE = {
-    DEFAULT_TEMP_PASSWORD: DEFAULT_TEMP_PASSWORD,
     normalizeUsuario: normalizeUsuario,
     normalizeUsername: normalizeUsername,
     normalizeLoginUsername: normalizeLoginUsername,
     buildUsernameFromName: buildUsernameFromName,
     getAll: getAll,
+    setRemoteUsers: function (users) { remoteUsers = Array.isArray(users) ? users : []; },
     getById: getById,
     getCoordinators: getCoordinators,
     validate: validate,

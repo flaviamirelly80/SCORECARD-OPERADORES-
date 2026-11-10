@@ -1,8 +1,4 @@
-/*
- * Importacao/exportacao local do prototipo.
- * A persistencia em localStorage e TEMPORARIA e LOCAL.
- * Na aplicacao definitiva, este modulo deve ser substituido por chamadas a API.
- */
+/* Importação/exportação Excel: a persistência local é apenas o fallback de desenvolvimento. */
 (function () {
   'use strict';
 
@@ -131,7 +127,7 @@
   }
 
   function validate(workbook, operators) {
-    var errors = [], valid = [], counts = { total: 0, valid: 0, errors: 0, newRecords: 0, updates: 0, duplicates: 0 }, availableUsers = Object.create(null);
+    var errors = [], valid = [], all = [], counts = { total: 0, valid: 0, errors: 0, newRecords: 0, updates: 0, duplicates: 0 }, availableUsers = Object.create(null);
     (operators || []).forEach(function (item) {
       var usuario = normalizeUsuario(item && (item.username || item.usuario));
       if (usuario) availableUsers[usuario] = true;
@@ -148,7 +144,9 @@
         headers.forEach(function (header, position) { row[header] = clean(cells[position]); });
         row.usuario = normalizeUsuario(row.usuario || row.username);
         counts.total += 1;
-        return { row: row, line: line };
+        var parsed = { row: row, line: line };
+        all.push({ sheet: sheetName, row: row, line: line });
+        return parsed;
       });
     });
     (parsedSheets.OPERADORES || []).forEach(function (item) {
@@ -162,6 +160,7 @@
         if (sheetName === 'OPERADORES' && !row.nome) errors.push({ sheet: sheetName, line: line, message: 'Nome não informado para o operador.' });
         if (sheetName === 'JORNADA' && !STATUS.includes(row.status)) errors.push({ sheet: sheetName, line: line, message: 'Status "' + row.status + '" não é válido.' });
         if (sheetName === 'ETIQUETAS') {
+          if (!row.numeroetiqueta) errors.push({ sheet: sheetName, line: line, message: 'NumeroEtiqueta não informado.' });
           var category = normalizeLabelCategory(row.categoria || row.categoriatabelas || row.category || '');
           var status = normalizeLabelStatus(row.status || row.statusetiqueta || '');
           if (!['SHE', 'MA'].includes(category)) errors.push({ sheet: sheetName, line: line, message: 'Categoria da etiqueta inválida. Use SHE ou MA.' });
@@ -170,31 +169,47 @@
           }
         }
         if (['JORNADA', 'ETIQUETAS', 'BOS', 'BOSQ', 'IDEIAS'].includes(sheetName) && !validDate(row.data)) errors.push({ sheet: sheetName, line: line, message: 'Data inválida.' });
-        if (sheetName === 'METAS' && !['ETIQUETAS', 'BOS', 'BOSQ', 'IDEIAS'].includes((row.indicador || '').toUpperCase())) errors.push({ sheet: sheetName, line: line, message: 'Indicador de meta não reconhecido.' });
+        if (sheetName === 'METAS' && !['ETIQUETAS', 'BOS', 'BOSQ', 'IDEIAS', 'SHE_ABERTAS', 'SHE_FECHADAS', 'IDEIAS_ABERTAS'].includes((row.indicador || '').trim().toUpperCase().replace(/\s+/g, '_'))) errors.push({ sheet: sheetName, line: line, message: 'Indicador de meta não reconhecido.' });
         var rowErrors = errors.filter(function (error) { return error.sheet === sheetName && error.line === line; });
         if (!rowErrors.length) { valid.push({ sheet: sheetName, row: row, line: line }); counts.valid += 1; }
       });
     });
     counts.errors = errors.length;
-    return { valid: valid, errors: errors, counts: counts };
+    return { valid: valid, all: all, errors: errors, counts: counts };
   }
 
   function validDate(value) { if (!value) return false; if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(value)) return true; return !Number.isNaN(Date.parse(value)); }
+  function identityDate(value) {
+    var input = clean(value), br = input.match(/^(\d{1,2})[/.](\d{1,2})[/.](\d{4})$/);
+    if (br) return br[3] + '-' + String(br[2]).padStart(2, '0') + '-' + String(br[1]).padStart(2, '0');
+    var iso = input.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+    return iso ? iso[1] + '-' + String(iso[2]).padStart(2, '0') + '-' + String(iso[3]).padStart(2, '0') : input;
+  }
+  function identityPart(value) { return clean(value).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, ''); }
+  function identityNumber(value) { return clean(value).toUpperCase(); }
+  function identityMonth(value) {
+    var months = ['janeiro', 'fevereiro', 'marco', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+    var normalized = identityPart(value), numeric = Number(normalized);
+    if (Number.isInteger(numeric) && numeric >= 1 && numeric <= 12) return String(numeric);
+    var index = months.indexOf(normalized);
+    return index < 0 ? normalized : String(index + 1);
+  }
   function identity(item) {
     var row = item.row, sheet = item.sheet;
     if (sheet === 'OPERADORES') return 'OPERADORES|' + normalizeUsuario(row.usuario || row.username);
-    if (sheet === 'JORNADA') return sheet + '|' + normalizeUsuario(row.usuario || row.username) + '|' + row.data + '|' + row.status;
-    if (sheet === 'ETIQUETAS') return sheet + '|' + normalizeUsuario(row.usuario || row.username) + '|' + row.data + '|' + row.numeroetiqueta;
-    if (sheet === 'BOS') return sheet + '|' + normalizeUsuario(row.usuario || row.username) + '|' + row.data + '|' + row.numerobos;
-    if (sheet === 'BOSQ') return sheet + '|' + normalizeUsuario(row.usuario || row.username) + '|' + row.data + '|' + row.numerobosq;
-    if (sheet === 'IDEIAS') return sheet + '|' + normalizeUsuario(row.usuario || row.username) + '|' + row.data + '|' + row.titulo;
-    return sheet + '|' + normalizeUsuario(row.usuario || row.username) + '|' + row.ano + '|' + row.mes + '|' + row.indicador;
+    var usuario = normalizeUsuario(row.usuario || row.username);
+    if (sheet === 'JORNADA') return sheet + '|' + usuario + '|' + identityDate(row.data);
+    if (sheet === 'ETIQUETAS') return sheet + '|' + usuario + '|' + identityNumber(row.numeroetiqueta);
+    if (sheet === 'BOS') return sheet + '|' + usuario + '|' + identityNumber(row.numerobos);
+    if (sheet === 'BOSQ') return sheet + '|' + usuario + '|' + identityNumber(row.numerobosq);
+    if (sheet === 'IDEIAS') return sheet + '|' + usuario + '|' + identityDate(row.data) + '|' + identityPart(row.titulo);
+    return sheet + '|' + usuario + '|' + Number(row.ano) + '|' + identityMonth(row.mes) + '|' + identityPart(row.indicador);
   }
 
   function preview(workbook, operators, existingKeys) {
     var result = validate(workbook, operators), seen = {}, existingOperators = Object.create(null);
     (operators || []).forEach(function (item) {
-      var usuario = normalizeUsuario(item && (item.username || item.usuario));
+      var usuario = normalizeUsuario(item && (item.externalId || item.username || item.usuario));
       if (usuario) existingOperators[usuario] = true;
     });
     result.valid.forEach(function (item) {
@@ -207,8 +222,14 @@
     });
     return result;
   }
-  function load() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null'); } catch (error) { return null; } }
-  function save(snapshot) { localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot)); }
+  function load() {
+    if (window.PORTAL_API && window.PORTAL_API.enabled()) return window.PORTAL_DATA_SERVICE.getSnapshot();
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null'); } catch (error) { return null; }
+  }
+  function save(snapshot) {
+    if (window.PORTAL_API && window.PORTAL_API.enabled()) throw new Error('A importação de produção deve ser persistida pela API.');
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+  }
 
   function commit(result, target) {
     var snapshot = load() || { records: {} }, added = 0, updated = 0, duplicates = 0, imported = Object.create(null);
@@ -231,7 +252,7 @@
       var row = item.row;
       var username = normalizeUsuario(row.usuario || row.username);
       var operator = target.operators.find(function (current) { return normalizeUsuario(current.username) === username; });
-      var normalized = { id: item.userId || (operator && operator.id) || 'op-' + (target.operators.length + 1), username: username, name: row.nome, initials: clean(row.nome).split(' ').slice(0, 2).map(function (part) { return part[0]; }).join('').toUpperCase(), area: row.area, function: row.funcao, role: row.perfil, shift: row.turno, status: row.status || (operator ? operator.status : 'Ativo'), coordinator: row.coordenador || 'Michelle Faria' };
+      var normalized = { id: item.userId || (operator && operator.id) || 'op-' + (target.operators.length + 1), username: username, name: row.nome, initials: clean(row.nome).split(' ').slice(0, 2).map(function (part) { return part[0]; }).join('').toUpperCase(), area: row.area, function: row.funcao, role: row.perfil, shift: row.turno, status: row.status || (operator ? operator.status : 'Ativo'), coordinator: row.coordenador || '' };
       if (operator) Object.assign(operator, normalized); else target.operators.push(normalized);
     });
     ['ETIQUETAS', 'BOS', 'BOSQ', 'IDEIAS'].forEach(function (sheet) {
@@ -278,5 +299,5 @@
     exportExcel('exportacao-scorecard', demoRows);
   }
 
-  window.EXCEL_IMPORT = { SHEETS: SHEETS, STATUS: STATUS, normalizeUsuario: normalizeUsuario, parseFile: parseFile, validate: validate, preview: preview, commit: commit, applyToData: applyToData, hydrate: hydrate, load: load, downloadTemplate: downloadTemplate, exportAll: exportAll, exportSheet: exportSheet };
+  window.EXCEL_IMPORT = { SHEETS: SHEETS, STATUS: STATUS, normalizeUsuario: normalizeUsuario, parseFile: parseFile, validate: validate, preview: preview, identity: identity, commit: commit, applyToData: applyToData, hydrate: hydrate, load: load, downloadTemplate: downloadTemplate, exportAll: exportAll, exportSheet: exportSheet };
 }());

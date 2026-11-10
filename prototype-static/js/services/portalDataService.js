@@ -6,6 +6,7 @@
   var IMPORTED_DATA_KEYS = ['scorecard-prototype-imported-data-v1', 'scorecard-imported-data-v1', 'scorecard-imported-data'];
   var cachedRaw = null;
   var cachedSnapshot = null;
+  var remoteSnapshot = null;
 
   function normalizeUsuario(value) {
     return window.EXCEL_IMPORT.normalizeUsuario(value);
@@ -55,6 +56,7 @@
   }
 
   function snapshot() {
+    if (window.PORTAL_API && window.PORTAL_API.enabled()) return remoteSnapshot || { records: {} };
     var raw = readSnapshotFromStorage();
     var nextSnapshot = raw && raw.records ? raw : { records: {} };
     var serialized = JSON.stringify(nextSnapshot);
@@ -83,9 +85,10 @@
       var row = item.row || {};
       var username = normalizeUsuario(field(row, ['Usuario', 'username']));
       var account = window.USER_SERVICE.getAll().find(function (user) {
-        return normalizeUsuario(user.username) === username;
+        return normalizeUsuario(user.externalId || user.username) === username;
       });
-      var role = normalizeText(field(row, ['Perfil', 'role'])).indexOf('coordenador') >= 0 ? 'coordinator' : account ? account.role : 'operator';
+      var profile = normalizeText(field(row, ['Perfil', 'role']));
+      var role = profile.indexOf('coordenador') >= 0 || profile === 'coordinator' ? 'coordinator' : profile === 'operator' || profile.indexOf('operador') >= 0 ? 'operator' : account ? account.role : 'operator';
       return {
         id: item.userId || (account && account.id) || username,
         username: username,
@@ -97,17 +100,18 @@
         shift: field(row, ['Turno', 'shift']) || '',
         role: role,
         status: field(row, ['Status', 'status']) || 'Ativo',
-        coordinator: field(row, ['Coordenador', 'coordinator']) || 'Michelle Faria'
+        coordinator: field(row, ['Coordenador', 'coordinator']) || ''
       };
     });
     if (imported.length) return imported.filter(function (operator) { return operator.role === 'operator'; });
+    if (window.PORTAL_API && window.PORTAL_API.enabled()) return [];
     if (hasImportedData()) return [];
-    return (window.PROTOTYPE_DATA.operators || []).filter(function (operator) { return operator.role !== 'coordinator' && operator.username !== 'michellefaria'; });
+    return (window.PROTOTYPE_DATA.operators || []).filter(function (operator) { return operator.role !== 'coordinator'; });
   }
 
   function rowsOrFallback(sheet, fallback) {
     var records = importedRows(sheet);
-    if (hasImportedData()) return records.map(function (item) { return Object.assign(normalizeRow(item.row), { userId: item.userId || '' }); });
+    if (hasImportedData() || (window.PORTAL_API && window.PORTAL_API.enabled())) return records.map(function (item) { return Object.assign(normalizeRow(item.row), { userId: item.userId || '' }); });
     return fallback || [];
   }
 
@@ -118,7 +122,7 @@
   }
 
   function getLabels() {
-    if (hasImportedData()) return rowsOrFallback('ETIQUETAS');
+    if (hasImportedData() || (window.PORTAL_API && window.PORTAL_API.enabled())) return rowsOrFallback('ETIQUETAS');
     return (window.PROTOTYPE_DATA.labels || []).map(function (row) {
       var operator = (window.PROTOTYPE_DATA.operators || []).find(function (item) { return item.id === row.userId; });
       return { usuario: operator && operator.username, data: row.date, categoria: row.category, status: row.status, quantidade: row.count, userId: row.userId };
@@ -129,7 +133,7 @@
   function getBosq() { return rowsOrFallback('BOSQ'); }
 
   function getIdeas() {
-    if (hasImportedData()) return rowsOrFallback('IDEIAS');
+    if (hasImportedData() || (window.PORTAL_API && window.PORTAL_API.enabled())) return rowsOrFallback('IDEIAS');
     var ideas = window.PROTOTYPE_DATA.ideas || {};
     return Array.from({ length: Number(ideas.registered || 0) }, function (_, index) {
       return { id: 'demo-idea-' + index, status: index < Number(ideas.implemented || 0) ? 'IMPLEMENTADA' : 'ABERTA' };
@@ -286,6 +290,16 @@
     parsePortalDate: parsePortalDate,
     normalizeUsuario: normalizeUsuario,
     normalizeArea: normalizeArea,
-    applyFilters: applyFilters
+    applyFilters: applyFilters,
+    setRemoteSnapshot: function (records) {
+      var keyed = {};
+      (records || []).forEach(function (item) {
+        if (!item || !item.sheet || !item.row) return;
+        var id = window.EXCEL_IMPORT.identity({ sheet: item.sheet, row: item.row });
+        keyed[id] = { sheet: item.sheet, row: item.row, userId: item.userId || '' };
+      });
+      remoteSnapshot = { records: keyed };
+    },
+    getSnapshot: function () { return snapshot(); }
   };
 }());
